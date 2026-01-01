@@ -1,0 +1,10 @@
+#Ignore all media files
+*.jpg
+*.pnp
+*.wav
+*.mp3
+*.mp4
+*.db
+
+#Ignore Environment files
+*.env
