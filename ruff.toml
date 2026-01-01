@@ -1,0 +1,68 @@
+# =============================================================================
+# Ruff Configuration for Agentic AI Patterns Workshop
+# =============================================================================
+# Ruff replaces flake8, isort, black, and other linting tools
+# Configuration follows project Constitution (Principle III: Clean Code)
+# =============================================================================
+
+target-version = "py311"
+line-length = 88
+fix = true
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "PTH",    # flake8-use-pathlib
+    "ERA",    # eradicate (commented out code)
+    "PL",     # pylint
+    "RUF",    # ruff-specific rules
+    "D",      # pydocstyle (docstring enforcement)
+    "ANN",    # flake8-annotations (type hint enforcement)
+]
+ignore = [
+    "E501",    # line too long (handled by formatter)
+    "PLR0913", # too many arguments (agents often need many params)
+    "PLR2004", # magic value comparison (acceptable in workshop)
+    "D100",    # missing module docstring (notebooks don't need)
+    "D104",    # missing package docstring
+    "ANN101",  # missing type for self (deprecated)
+    "ANN102",  # missing type for cls (deprecated)
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.isort]
+known-first-party = ["src"]
+force-single-line = false
+lines-after-imports = 2
+
+[lint.per-file-ignores]
+"tests/*" = [
+    "ARG",     # unused arguments in fixtures
+    "PLR2004", # magic values in tests
+    "D",       # docstrings not required in tests
+    "ANN",     # annotations not required in tests
+]
+"notebooks/*" = [
+    "E402",    # module level import not at top of file
+    "ERA001",  # commented out code (for teaching)
+    "D",       # docstrings handled differently in notebooks
+    "ANN",     # annotations handled differently in notebooks
+]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
