@@ -1,0 +1,55 @@
+# Research Pipeline Workflow
+# A multi-step workflow for conducting research and producing summaries
+
+name: research_pipeline
+description: Multi-step research workflow with search, analysis, and summarization
+
+steps:
+  - name: search
+    agent: research_agent
+    prompt: |
+      Research the following topic thoroughly:
+      {topic}
+      
+      Provide at least 3 relevant sources with key findings from each.
+      Structure your response as:
+      1. Source name and URL
+      2. Key findings
+      3. Relevance to the topic
+    outputs:
+      - search_results
+    retry:
+      max_attempts: 3
+      delay_seconds: 2.0
+      backoff_multiplier: 2.0
+
+  - name: analyze
+    agent: research_agent
+    prompt: |
+      Analyze the following research findings:
+      {search_results}
+      
+      Identify:
+      1. Key themes and patterns across sources
+      2. Points of agreement and disagreement
+      3. Gaps in the available information
+      4. Reliability assessment of sources
+    outputs:
+      - analysis
+
+  - name: summarize
+    agent: summarizer_agent
+    prompt: |
+      Create an executive summary based on this analysis:
+      {analysis}
+      
+      Requirements:
+      - Maximum 300 words
+      - Include key findings section
+      - Include recommendations if applicable
+      - Note any important caveats or limitations
+    outputs:
+      - summary
+
+on_error:
+  strategy: retry
