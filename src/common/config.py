@@ -56,26 +56,26 @@ class Settings(BaseSettings):
         default=None,
         description="API key for Azure OpenAI (optional if using CLI auth)",
     )
-    azure_openai_version: str = Field(
+    azure_openai_api_version: str = Field(
         default="2024-10-01-preview",
         description="API version for Azure OpenAI",
     )
 
     # Model Deployments
-    completion_deployment_name: str = Field(
-        default="gpt-4o",
+    azure_openai_deployment: str = Field(
+        default="gpt-5-nano",
         description="Primary model deployment name",
     )
     medium_deployment_model_name: str = Field(
-        default="gpt-4o-mini",
+        default="gpt-4.1-mini",
         description="Medium-tier model deployment",
     )
     small_deployment_model_name: str = Field(
-        default="gpt-4o-mini",
+        default="gpt-4.1-nano",
         description="Small/fast model deployment",
     )
     responses_deployment_name: str = Field(
-        default="gpt-4o",
+        default="gpt-4.1-mini",
         description="Model for response generation",
     )
 

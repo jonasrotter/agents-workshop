@@ -20,3 +20,15 @@ python-dotenv==1.2.1
 pytz==2025.2
 pandas==2.3.3
 uvicorn==0.38.0
+
+# Missing dependencies
+pydantic_settings
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-logging
+azure-monitor-opentelemetry-exporter
+pytest 
+pytest-cov
+pytest-timeout
+pytest-asyncio
+ipykernel

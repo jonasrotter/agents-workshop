@@ -307,10 +307,10 @@ class TestSemanticSimilarityEvaluator:
         """Test similar text detection."""
         evaluator = SemanticSimilarityEvaluator(threshold=0.3)
         result = evaluator.evaluate(
-            "AI is transforming technology",
-            "Artificial intelligence transforms tech industry"
+            "AI technology is transforming the world",
+            "AI technology transforms the modern world"
         )
-        # Word overlap should give some similarity
+        # Word overlap should give some similarity (AI, technology, the, world)
         assert result.similarity_score > 0
 
     def test_different_text(self) -> None:

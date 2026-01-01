@@ -57,7 +57,7 @@ class ResearchAgent(BaseAgent):
         system_prompt: str = RESEARCH_SYSTEM_PROMPT,
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_completion_tokens: int = 4096,
         max_tool_iterations: int = 10,
         settings: Optional[Settings] = None,
     ) -> None:
@@ -68,7 +68,7 @@ class ResearchAgent(BaseAgent):
             system_prompt: Instructions defining agent behavior.
             model: Azure OpenAI deployment name.
             temperature: Sampling temperature.
-            max_tokens: Maximum tokens in response.
+            max_completion_tokens: Maximum tokens in response.
             max_tool_iterations: Maximum tool call loops.
             settings: Configuration settings.
         """
@@ -77,7 +77,7 @@ class ResearchAgent(BaseAgent):
             system_prompt=system_prompt,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_completion_tokens=max_completion_tokens,
             settings=settings,
         )
         self.max_tool_iterations = max_tool_iterations

@@ -275,9 +275,11 @@ class OpenAICostCalculator:
         """Calculate cost in USD for OpenAI models."""
         model_key = model.lower()
         
-        # Find matching price
-        for key, (input_price, output_price) in self.PRICES.items():
+        # Find exact match first, then substring match
+        # Sort keys by length (longest first) to match most specific model first
+        for key in sorted(self.PRICES.keys(), key=len, reverse=True):
             if key in model_key:
+                input_price, output_price = self.PRICES[key]
                 input_cost = (input_tokens / 1000) * input_price
                 output_cost = (output_tokens / 1000) * output_price
                 return input_cost + output_cost

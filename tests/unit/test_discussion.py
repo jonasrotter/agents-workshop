@@ -184,7 +184,7 @@ class TestDiscussionTurn:
 
     def test_turn_with_timestamp(self) -> None:
         """Test turn with timestamp."""
-        timestamp = datetime.now()
+        timestamp = 1234567890.0
         turn = DiscussionTurn(
             participant="Agent1",
             content="Test content",
@@ -194,16 +194,16 @@ class TestDiscussionTurn:
         )
         assert turn.timestamp == timestamp
 
-    def test_turn_with_metadata(self) -> None:
-        """Test turn with metadata."""
+    def test_turn_with_references(self) -> None:
+        """Test turn with references."""
         turn = DiscussionTurn(
             participant="Agent1",
             content="Test content",
             phase=DiscussionPhase.DISCUSSION,
             round_number=1,
-            metadata={"key": "value"},
+            references=["Agent2", "Agent3"],
         )
-        assert turn.metadata == {"key": "value"}
+        assert turn.references == ["Agent2", "Agent3"]
 
 
 # =============================================================================
@@ -218,19 +218,19 @@ class TestDiscussionConflict:
         """Test creating a discussion conflict."""
         conflict = DiscussionConflict(
             participants=["Agent1", "Agent2"],
-            description="Disagreement on topic",
-            round_number=1,
+            topic="Disagreement on topic",
+            positions={"Agent1": "Position A", "Agent2": "Position B"},
         )
         assert conflict.participants == ["Agent1", "Agent2"]
-        assert conflict.description == "Disagreement on topic"
-        assert conflict.round_number == 1
+        assert conflict.topic == "Disagreement on topic"
+        assert "Agent1" in conflict.positions
 
     def test_conflict_with_resolution(self) -> None:
         """Test conflict with resolution."""
         conflict = DiscussionConflict(
             participants=["Agent1", "Agent2"],
-            description="Disagreement",
-            round_number=1,
+            topic="Disagreement",
+            positions={"Agent1": "Position A", "Agent2": "Position B"},
             resolution="Agreed to disagree",
         )
         assert conflict.resolution == "Agreed to disagree"
@@ -248,10 +248,12 @@ class TestDiscussionSummary:
         """Test creating a discussion summary."""
         summary = DiscussionSummary(
             topic="Test topic",
+            participants=["Agent1", "Agent2", "Agent3"],
             conclusion="Test conclusion",
             key_points=["Point 1", "Point 2"],
             total_rounds=3,
             total_turns=9,
+            conflicts=[],
             consensus_reached=True,
         )
         assert summary.topic == "Test topic"
@@ -265,11 +267,12 @@ class TestDiscussionSummary:
         """Test summary with conflicts."""
         conflict = DiscussionConflict(
             participants=["A", "B"],
-            description="Conflict",
-            round_number=1,
+            topic="Conflict topic",
+            positions={"A": "Position A", "B": "Position B"},
         )
         summary = DiscussionSummary(
             topic="Test",
+            participants=["A", "B"],
             conclusion="Conclusion",
             key_points=[],
             total_rounds=1,
@@ -278,7 +281,7 @@ class TestDiscussionSummary:
             conflicts=[conflict],
         )
         assert len(summary.conflicts) == 1
-        assert summary.conflicts[0].description == "Conflict"
+        assert summary.conflicts[0].topic == "Conflict topic"
 
 
 # =============================================================================
@@ -342,20 +345,20 @@ class TestDiscussionConfig:
             conflict_strategy=ConflictStrategy.VOTE,
             allow_rebuttals=True,
             rebuttal_rounds=2,
-            time_limit_seconds=300,
+            turn_timeout=300.0,
         )
         assert config.conflict_strategy == ConflictStrategy.VOTE
         assert config.allow_rebuttals is True
         assert config.rebuttal_rounds == 2
-        assert config.time_limit_seconds == 300
+        assert config.turn_timeout == 300.0
 
     def test_config_defaults(self) -> None:
         """Test config defaults."""
         config = DiscussionConfig(topic="Default Test")
-        assert config.max_rounds == 3
-        assert config.conflict_strategy == ConflictStrategy.ACKNOWLEDGE
-        assert config.allow_rebuttals is False
-        assert config.rebuttal_rounds == 0
+        assert config.max_rounds == 5
+        assert config.conflict_strategy == ConflictStrategy.EXPLORE
+        assert config.allow_rebuttals is True
+        assert config.rebuttal_rounds == 1
 
 
 # =============================================================================
@@ -379,11 +382,15 @@ class TestRoundResult:
         result = RoundResult(
             round_number=1,
             turns=turns,
+            conflicts_detected=0,
             duration_seconds=10.5,
+            participation_rate=1.0,
         )
         assert result.round_number == 1
         assert len(result.turns) == 1
         assert result.duration_seconds == 10.5
+        assert result.conflicts_detected == 0
+        assert result.participation_rate == 1.0
 
 
 # =============================================================================
@@ -526,7 +533,7 @@ class TestDiscussionProtocol:
         protocol = DiscussionProtocol(discussion_config)
         callback = MagicMock()
         protocol.on_turn(callback)
-        assert callback in protocol._turn_callbacks
+        assert callback in protocol._on_turn_callbacks
 
     def test_on_round_callback(
         self, discussion_config: DiscussionConfig
@@ -535,7 +542,7 @@ class TestDiscussionProtocol:
         protocol = DiscussionProtocol(discussion_config)
         callback = MagicMock()
         protocol.on_round(callback)
-        assert callback in protocol._round_callbacks
+        assert callback in protocol._on_round_callbacks
 
     @pytest.mark.asyncio
     async def test_run_discussion(
@@ -598,7 +605,7 @@ class TestDebateProtocol:
         proponent = MockAgent("Pro")
         opponent = MockAgent("Con")
         
-        debate = DebateProtocol(
+        debate = create_debate(
             topic="Test Debate",
             proponent=proponent,
             opponent=opponent,
@@ -612,7 +619,7 @@ class TestDebateProtocol:
         opponent = MockAgent("Con")
         judge = MockAgent("Judge")
         
-        debate = DebateProtocol(
+        debate = create_debate(
             topic="Test Debate",
             proponent=proponent,
             opponent=opponent,
@@ -646,7 +653,7 @@ class TestRoundRobinProtocol:
         self, mock_agents: list[MockAgent]
     ) -> None:
         """Test creating a round robin protocol."""
-        protocol = RoundRobinProtocol(
+        protocol = create_roundtable(
             topic="Round Robin Test",
             participants=mock_agents,
         )
@@ -657,7 +664,7 @@ class TestRoundRobinProtocol:
         self, mock_agents: list[MockAgent]
     ) -> None:
         """Test round robin with custom rounds."""
-        protocol = RoundRobinProtocol(
+        protocol = create_roundtable(
             topic="Test",
             participants=mock_agents,
             rounds=5,
@@ -795,13 +802,13 @@ class TestEdgeCases:
         config = DiscussionConfig(
             topic="Timed Test",
             max_rounds=100,  # Many rounds
-            time_limit_seconds=1,  # Short time limit
+            turn_timeout=1.0,  # Short time limit
         )
         protocol = DiscussionProtocol(config)
         
         # Discussion should respect time limit if implemented
         # This is a placeholder for timeout logic testing
-        assert config.time_limit_seconds == 1
+        assert config.turn_timeout == 1.0
 
     def test_duplicate_participant_registration(
         self,

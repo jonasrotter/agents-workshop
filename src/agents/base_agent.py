@@ -40,7 +40,7 @@ class BaseAgent(ABC):
         system_prompt: Instructions defining agent behavior.
         model: Azure OpenAI deployment name.
         temperature: Sampling temperature (0-2).
-        max_tokens: Maximum tokens in response.
+        max_completion_tokens: Maximum tokens in response.
     """
 
     def __init__(
@@ -49,7 +49,7 @@ class BaseAgent(ABC):
         system_prompt: str = "You are a helpful AI assistant.",
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_completion_tokens: int = 4096,
         settings: Optional[Settings] = None,
     ) -> None:
         """Initialize the base agent.
@@ -59,7 +59,7 @@ class BaseAgent(ABC):
             system_prompt: Instructions defining agent behavior.
             model: Azure OpenAI deployment name (defaults to config).
             temperature: Sampling temperature (0-2).
-            max_tokens: Maximum tokens in response.
+            max_completion_tokens: Maximum tokens in response.
             settings: Configuration settings (defaults to get_settings()).
 
         Raises:
@@ -68,7 +68,7 @@ class BaseAgent(ABC):
         self.name = name
         self.system_prompt = system_prompt
         self.temperature = temperature
-        self.max_tokens = max_tokens
+        self.max_completion_tokens = max_completion_tokens
         self._settings = settings or get_settings()
         self._client: Optional[AsyncAzureOpenAI] = None
         self._conversation_history: list[dict[str, str]] = []
@@ -203,7 +203,7 @@ class BaseAgent(ABC):
                     "model": self.model,
                     "messages": messages,
                     "temperature": kwargs.get("temperature", self.temperature),
-                    "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+                    "max_completion_tokens": kwargs.get("max_completion_tokens", self.max_completion_tokens),
                 }
 
                 # Add tools if registered

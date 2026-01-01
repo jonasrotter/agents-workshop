@@ -16,7 +16,7 @@ from src.agents.a2a_server import (
     # Models
     AgentCard,
     Skill,
-    AgentCapabilities,
+    Capabilities,
     Task,
     TaskState,
     TaskStatus,
@@ -36,8 +36,12 @@ class TestAgentCardSchema:
     """Test Agent Card schema compliance."""
 
     def test_agent_card_required_fields(self) -> None:
-        """Agent Card must have name and url."""
-        card = AgentCard(name="Test Agent", url="http://localhost:8000")
+        """Agent Card must have name, url, and skills."""
+        card = AgentCard(
+            name="Test Agent",
+            url="http://localhost:8000",
+            skills=[Skill(id="test", name="Test", description="Test skill")],
+        )
         
         assert card.name == "Test Agent"
         assert card.url == "http://localhost:8000"
@@ -49,6 +53,7 @@ class TestAgentCardSchema:
             description="A test agent",
             url="http://localhost:8000",
             version="1.0.0",
+            skills=[Skill(id="test", name="Test", description="Test skill")],
         )
         
         assert card.description == "A test agent"
@@ -60,7 +65,7 @@ class TestAgentCardSchema:
             name="Test Agent",
             url="http://localhost:8000",
             skills=[
-                Skill(id="skill_1", name="Skill One"),
+                Skill(id="skill_1", name="Skill One", description="First skill"),
                 Skill(id="skill_2", name="Skill Two", description="Second skill"),
             ],
         )
@@ -74,7 +79,7 @@ class TestAgentCardSchema:
         card = AgentCard(
             name="Test Agent",
             url="http://localhost:8000",
-            skills=[Skill(id="test", name="Test")],
+            skills=[Skill(id="test", name="Test", description="Test skill")],
         )
         
         data = card.model_dump()
@@ -90,11 +95,12 @@ class TestSkillSchema:
     """Test Skill schema compliance."""
 
     def test_skill_required_fields(self) -> None:
-        """Skill must have id and name."""
-        skill = Skill(id="test_skill", name="Test Skill")
+        """Skill must have id, name, and description."""
+        skill = Skill(id="test_skill", name="Test Skill", description="A test skill")
         
         assert skill.id == "test_skill"
         assert skill.name == "Test Skill"
+        assert skill.description == "A test skill"
 
     def test_skill_with_description(self) -> None:
         """Skill can have optional description."""
@@ -111,6 +117,7 @@ class TestSkillSchema:
         skill = Skill(
             id="test_skill",
             name="Test Skill",
+            description="A test skill",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -128,6 +135,7 @@ class TestSkillSchema:
         skill = Skill(
             id="test_skill",
             name="Test Skill",
+            description="A test skill",
             outputSchema={
                 "type": "object",
                 "properties": {
@@ -139,12 +147,12 @@ class TestSkillSchema:
         assert skill.outputSchema is not None
 
 
-class TestAgentCapabilitiesSchema:
-    """Test Agent Capabilities schema compliance."""
+class TestCapabilitiesSchema:
+    """Test Capabilities schema compliance."""
 
     def test_default_capabilities(self) -> None:
         """Default capabilities should be minimal."""
-        caps = AgentCapabilities()
+        caps = Capabilities()
         
         assert caps.streaming is False
         assert caps.pushNotifications is False
@@ -152,7 +160,7 @@ class TestAgentCapabilitiesSchema:
 
     def test_enabled_capabilities(self) -> None:
         """Capabilities can be enabled."""
-        caps = AgentCapabilities(
+        caps = Capabilities(
             streaming=True,
             pushNotifications=True,
             stateManagement=True,
@@ -295,14 +303,12 @@ class TestMessagePartSchemas:
     def test_file_part(self) -> None:
         """FilePart schema compliance."""
         part = FilePart(
-            fileId="file-001",
-            name="document.pdf",
+            uri="file://document.pdf",
             mimeType="application/pdf",
         )
         
         assert part.kind == "file"
-        assert part.fileId == "file-001"
-        assert part.name == "document.pdf"
+        assert part.uri == "file://document.pdf"
         assert part.mimeType == "application/pdf"
 
     def test_data_part(self) -> None:
@@ -315,7 +321,7 @@ class TestMessagePartSchemas:
     def test_part_serialization(self) -> None:
         """Parts serialize with kind discriminator."""
         text = TextPart(text="test")
-        file = FilePart(fileId="f1", name="test.txt", mimeType="text/plain")
+        file = FilePart(uri="file://test.txt", mimeType="text/plain")
         data = DataPart(data={})
         
         assert text.model_dump()["kind"] == "text"
@@ -327,13 +333,15 @@ class TestArtifactSchema:
     """Test Artifact schema compliance."""
 
     def test_artifact_required_fields(self) -> None:
-        """Artifact must have artifactId and parts."""
+        """Artifact must have artifactId, name, and parts."""
         artifact = Artifact(
             artifactId="art-001",
+            name="result",
             parts=[TextPart(text="Content")],
         )
         
         assert artifact.artifactId == "art-001"
+        assert artifact.name == "result"
         assert len(artifact.parts) == 1
 
     def test_artifact_with_name(self) -> None:
@@ -539,7 +547,7 @@ class TestA2AServerContract:
         """Server creates FastAPI app."""
         server = A2AServer(
             name="Test Agent",
-            skills=[Skill(id="test", name="Test")],
+            skills=[Skill(id="test", name="Test", description="Test skill")],
         )
         
         app = server.create_app()
@@ -552,13 +560,14 @@ class TestA2AServerContract:
             name="Test Agent",
             description="A test agent",
             url="http://localhost:8000",
-            skills=[Skill(id="test", name="Test")],
+            skills=[Skill(id="test", name="Test", description="Test skill")],
         )
         
-        assert server.agent_card.name == "Test Agent"
-        assert server.agent_card.description == "A test agent"
-        assert server.agent_card.url == "http://localhost:8000"
-        assert len(server.agent_card.skills) == 1
+        agent_card = server._build_agent_card()
+        assert agent_card.name == "Test Agent"
+        assert agent_card.description == "A test agent"
+        assert agent_card.url == "http://localhost:8000"
+        assert len(agent_card.skills) == 1
 
 
 class TestA2AMethodNames:
