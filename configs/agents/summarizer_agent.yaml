@@ -4,7 +4,7 @@
 name: summarizer_agent
 model:
   provider: azure_openai
-  deployment: gpt-4o
+  deployment: gpt-4.1-mini
   temperature: 0.3
 
 instructions: |

@@ -87,9 +87,13 @@ class DiscussionProtocol:
     ) -> None:
         """Initialize the discussion protocol."""
         self.config = config
+        # Calculate total rounds needed: main rounds + rebuttal rounds
+        total_rounds = config.max_rounds + (
+            config.rebuttal_rounds if config.allow_rebuttals else 0
+        )
         self.moderator = moderator or ModeratorAgent(
             conflict_strategy=config.conflict_strategy,
-            max_rounds=config.max_rounds,
+            max_rounds=total_rounds,
         )
         
         self._participants: dict[str, Participant] = {}
