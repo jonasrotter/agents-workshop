@@ -42,14 +42,10 @@ cd agents-workshop
 ### 2. Create Virtual Environment
 
 ```bash
-# Using uv (recommended)
-uv venv
-uv pip install -e ".[dev]"
-
-# Or using standard Python
+# Using standard Python
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt"
 ```
 
 ### 3. Configure Environment
@@ -146,22 +142,6 @@ agents-workshop/
 - **Azure Monitor** - Observability backend
 - **pytest** - Testing framework
 
-## 📚 Learning Path
-
-### Beginner Path (2 hours)
-1. Start with **Scenario 01** - Learn the base agent pattern
-2. Complete **Scenario 04** - Understand workflow orchestration
-3. Try **Scenario 07** - Learn evaluation basics
-
-### Intermediate Path (4 hours)
-1. Complete all scenarios in order
-2. Modify exercises to add custom functionality
-3. Integrate with your own tools
-
-### Advanced Path (6+ hours)
-1. Complete all scenarios with bonus exercises
-2. Build a custom multi-agent application
-3. Set up production observability pipeline
 
 ## 🧪 Running Tests
 
