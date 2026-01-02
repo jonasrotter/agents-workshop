@@ -161,14 +161,9 @@ pytest tests/integration/ -v
 ## 📖 Additional Resources
 
 - [Architecture Documentation](docs/ARCHITECTURE.md)
-- [Contributing Guide](docs/CONTRIBUTING.md)
-- [Cost Guidance](docs/COST_GUIDANCE.md)
 - [Azure OpenAI Documentation](https://learn.microsoft.com/azure/ai-services/openai/)
 - [Microsoft Agent Framework](https://github.com/microsoft/agent-framework)
 
-## 🤝 Contributing
-
-Contributions are welcome! See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
 
 ## 📄 License
 
