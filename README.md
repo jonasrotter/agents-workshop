@@ -16,7 +16,6 @@ This workshop consists of 7 interactive Jupyter Notebook scenarios, each teachin
 | [06](notebooks/06_agent_discussions.ipynb) | Agent Discussions | 45 min | Moderated debates, turn-taking, conflict resolution |
 | [07](notebooks/07_evaluation_evolution.ipynb) | Evaluation & Evolution | 45 min | Metrics, prompt tuning, A/B testing |
 
-**Total Duration**: ~4-6 hours
 
 ## 📋 Prerequisites
 
@@ -62,13 +61,13 @@ Edit `.env` with your settings:
 # Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-api-key
-AZURE_OPENAI_DEPLOYMENT=gpt-4o
+AZURE_OPENAI_DEPLOYMENT=gpt-4.1-mini
 
 # Azure Monitor (for observability)
 APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=xxx;IngestionEndpoint=https://...
 
 # Optional: Model configuration
-DEFAULT_MODEL=gpt-4o
+DEFAULT_MODEL=gpt-4.1-mini
 DEFAULT_TEMPERATURE=0.7
 DEFAULT_MAX_TOKENS=4096
 ```
