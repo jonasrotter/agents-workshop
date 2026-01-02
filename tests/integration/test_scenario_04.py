@@ -564,13 +564,11 @@ class TestWorkflowHooks:
         
         hook_calls = []
         
-        def before_hook(step_name: str, inputs: dict) -> None:
-            hook_calls.append(("before", step_name))
+        def before_hook(step, inputs) -> None:
+            hook_calls.append(("before", step.name))
         
-        engine = WorkflowEngine(
-            name="hook_test",
-            before_step=before_hook,
-        )
+        engine = WorkflowEngine(name="hook_test")
+        engine.before_step(before_hook)
         engine.add_step(DataTransform("step1", lambda x: x))
         engine.add_step(DataTransform("step2", lambda x: x))
         
@@ -587,13 +585,11 @@ class TestWorkflowHooks:
         
         hook_calls = []
         
-        def after_hook(step_name: str, result: StepResult) -> None:
-            hook_calls.append(("after", step_name, result.succeeded))
+        def after_hook(step, result: StepResult) -> None:
+            hook_calls.append(("after", step.name, result.succeeded))
         
-        engine = WorkflowEngine(
-            name="hook_test",
-            after_step=after_hook,
-        )
+        engine = WorkflowEngine(name="hook_test")
+        engine.after_step(after_hook)
         engine.add_step(DataTransform("step1", lambda x: {"done": True}))
         
         await engine.execute({})

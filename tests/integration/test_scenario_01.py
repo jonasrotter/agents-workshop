@@ -231,21 +231,17 @@ class TestScenario01EndToEnd:
             "calculate": calculate,
         })
 
-        # Mock the Azure OpenAI client
+        # Mock the ChatAgent response
+        # AgentRunResponse has .text property for the response content
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Test response"
-        mock_response.choices[0].message.tool_calls = None
-        mock_response.usage = MagicMock()
-        mock_response.usage.prompt_tokens = 10
-        mock_response.usage.completion_tokens = 20
+        mock_response.text = "Test response"
 
         with patch.object(
-            agent, "_create_completion", new_callable=AsyncMock
-        ) as mock_completion:
-            mock_completion.return_value = mock_response
+            agent._agent, "run", new_callable=AsyncMock
+        ) as mock_run:
+            mock_run.return_value = mock_response
 
             result = await agent.run("What is 2 + 2?")
 
             assert result == "Test response"
-            mock_completion.assert_called_once()
+            mock_run.assert_called_once()

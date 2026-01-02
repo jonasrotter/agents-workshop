@@ -1,16 +1,28 @@
-"""Base agent implementation with telemetry integration.
+"""Base agent implementation with Microsoft Agent Framework and telemetry.
 
 This module provides the foundation for all workshop agents,
-including Azure OpenAI integration and OpenTelemetry tracing.
+using Microsoft Agent Framework with Azure OpenAI and OpenTelemetry tracing.
+
+The implementation uses:
+- `ChatAgent` from agent-framework for agent orchestration
+- `AzureOpenAIChatClient` for Azure OpenAI integration
+- `@ai_function` decorator for tool definitions
+- OpenTelemetry middleware for observability
 """
 
-import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from collections.abc import AsyncIterable, Callable
+from typing import Annotated, Any
 
-from openai import AsyncAzureOpenAI
-from openai.types.chat import ChatCompletion
+from agent_framework import ChatAgent, ai_function
+from agent_framework._middleware import (
+    AgentMiddleware,
+    AgentRunContext,
+)
+from agent_framework._threads import AgentThread
+from agent_framework._types import AgentRunResponse, AgentRunResponseUpdate
+from agent_framework.azure import AzureOpenAIChatClient
 
 from src.common.config import Settings, get_settings
 from src.common.exceptions import AgentError, ConfigurationError
@@ -24,55 +36,95 @@ logger = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
 
 
+class TelemetryMiddleware(AgentMiddleware):
+    """Middleware to add OpenTelemetry tracing to agent runs."""
+
+    def __init__(self, agent_name: str, model: str = "default") -> None:
+        """Initialize telemetry middleware.
+
+        Args:
+            agent_name: Name of the agent for span attributes.
+            model: Model name for span attributes.
+        """
+        self.agent_name = agent_name
+        self.model = model
+
+    async def process(
+        self,
+        context: AgentRunContext,
+        next: Callable[[AgentRunContext], Any],
+    ) -> None:
+        """Wrap agent execution with OpenTelemetry span.
+
+        Args:
+            context: Agent run context.
+            next: Next handler in middleware chain.
+        """
+        with tracer.start_as_current_span("agent_run") as span:
+            span.set_attributes(
+                create_span_attributes(
+                    agent_name=self.agent_name,
+                    model=self.model,
+                )
+            )
+            try:
+                await next(context)
+            except Exception as e:
+                record_exception(span, e)
+                raise
+
+
 class BaseAgent(ABC):
-    """Base class for all workshop agents.
+    """Base class for all workshop agents using Microsoft Agent Framework.
 
     Provides common functionality including:
-    - Azure OpenAI client management
-    - OpenTelemetry tracing
-    - Tool integration support
-    - Conversation history management
+    - ChatAgent from Microsoft Agent Framework
+    - Azure OpenAI integration via AzureOpenAIChatClient
+    - OpenTelemetry tracing via middleware
+    - Tool integration via @ai_function decorator
+    - Conversation history via AgentThread
 
     Subclasses must implement the `run` method.
 
     Attributes:
         name: Unique identifier for the agent.
-        system_prompt: Instructions defining agent behavior.
+        instructions: System prompt defining agent behavior.
         model: Azure OpenAI deployment name.
         temperature: Sampling temperature (0-2).
-        max_completion_tokens: Maximum tokens in response.
+        max_tokens: Maximum tokens in response.
     """
 
     def __init__(
         self,
         name: str,
-        system_prompt: str = "You are a helpful AI assistant.",
-        model: Optional[str] = None,
+        instructions: str = "You are a helpful AI assistant.",
+        model: str | None = None,
         temperature: float = 0.7,
-        max_completion_tokens: int = 4096,
-        settings: Optional[Settings] = None,
+        max_tokens: int = 4096,
+        tools: list[Callable[..., Any]] | None = None,
+        settings: Settings | None = None,
     ) -> None:
         """Initialize the base agent.
 
         Args:
             name: Unique identifier for the agent.
-            system_prompt: Instructions defining agent behavior.
+            instructions: System prompt defining agent behavior.
             model: Azure OpenAI deployment name (defaults to config).
             temperature: Sampling temperature (0-2).
-            max_completion_tokens: Maximum tokens in response.
+            max_tokens: Maximum tokens in response.
+            tools: List of @ai_function decorated tools.
             settings: Configuration settings (defaults to get_settings()).
 
         Raises:
             ConfigurationError: If Azure OpenAI is not configured.
         """
         self.name = name
-        self.system_prompt = system_prompt
+        self.instructions = instructions
         self.temperature = temperature
-        self.max_completion_tokens = max_completion_tokens
+        self.max_tokens = max_tokens
         self._settings = settings or get_settings()
-        self._client: Optional[AsyncAzureOpenAI] = None
-        self._conversation_history: list[dict[str, str]] = []
-        self._tools: list[dict[str, Any]] = []
+        self._tools = tools or []
+        self._thread: AgentThread | None = None
 
         # Set model from config if not specified
         self.model = model or self._settings.azure_openai_deployment
@@ -83,85 +135,127 @@ class BaseAgent(ABC):
                 config_key="AZURE_OPENAI_DEPLOYMENT",
             )
 
+        # Create chat client and agent
+        self._chat_client = self._create_chat_client()
+        self._agent = self._create_agent()
+
         logger.info(f"Initialized agent '{name}' with model '{self.model}'")
 
+    # Backward compatibility aliases
     @property
-    def client(self) -> AsyncAzureOpenAI:
-        """Get or create the Azure OpenAI client.
+    def system_prompt(self) -> str:
+        """Alias for instructions (backward compatibility)."""
+        return self.instructions
+
+    @system_prompt.setter
+    def system_prompt(self, value: str) -> None:
+        """Set instructions (backward compatibility)."""
+        self.instructions = value
+
+    @property
+    def max_completion_tokens(self) -> int:
+        """Alias for max_tokens (backward compatibility)."""
+        return self.max_tokens
+
+    @max_completion_tokens.setter
+    def max_completion_tokens(self, value: int) -> None:
+        """Set max_tokens (backward compatibility)."""
+        self.max_tokens = value
+
+    def _create_chat_client(self) -> AzureOpenAIChatClient:
+        """Create Azure OpenAI chat client.
 
         Returns:
-            Configured AsyncAzureOpenAI client.
+            Configured AzureOpenAIChatClient.
 
         Raises:
             ConfigurationError: If Azure OpenAI is not configured.
         """
-        if self._client is None:
-            if not self._settings.is_azure_configured:
-                raise ConfigurationError(
-                    "Azure OpenAI is not configured",
-                    config_key="AZURE_OPENAI_ENDPOINT",
-                )
+        if not self._settings.is_azure_configured:
+            raise ConfigurationError(
+                "Azure OpenAI is not configured",
+                config_key="AZURE_OPENAI_ENDPOINT",
+            )
 
-            # Create client based on authentication method
-            if self._settings.azure_openai_api_key:
-                self._client = AsyncAzureOpenAI(
-                    azure_endpoint=self._settings.azure_openai_endpoint,
-                    api_key=self._settings.azure_openai_api_key,
-                    api_version=self._settings.azure_openai_api_version,
-                )
-            else:
-                # Use Azure AD authentication
-                from azure.identity.aio import DefaultAzureCredential
+        # Create client with API key or credential
+        if self._settings.azure_openai_api_key:
+            return AzureOpenAIChatClient(
+                endpoint=self._settings.azure_openai_endpoint,
+                api_key=self._settings.azure_openai_api_key,
+                deployment_name=self.model,
+                api_version=self._settings.azure_openai_api_version,
+            )
+        else:
+            # Use Azure AD authentication
+            from azure.identity import DefaultAzureCredential
 
-                credential = DefaultAzureCredential()
-                self._client = AsyncAzureOpenAI(
-                    azure_endpoint=self._settings.azure_openai_endpoint,
-                    azure_ad_token_provider=self._get_token_provider(credential),
-                    api_version=self._settings.azure_openai_api_version,
-                )
+            return AzureOpenAIChatClient(
+                endpoint=self._settings.azure_openai_endpoint,
+                credential=DefaultAzureCredential(),
+                deployment_name=self.model,
+                api_version=self._settings.azure_openai_api_version,
+            )
 
-        return self._client
-
-    def _get_token_provider(self, credential: Any) -> Any:
-        """Create a token provider for Azure AD authentication.
-
-        Args:
-            credential: Azure credential instance.
+    def _create_agent(self) -> ChatAgent:
+        """Create ChatAgent with telemetry middleware.
 
         Returns:
-            Token provider callable.
+            Configured ChatAgent instance.
         """
-        from azure.identity import get_bearer_token_provider
-
-        return get_bearer_token_provider(
-            credential,
-            "https://cognitiveservices.azure.com/.default",
+        return ChatAgent(
+            chat_client=self._chat_client,
+            name=self.name,
+            instructions=self.instructions,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            tools=self._tools if self._tools else None,
+            middleware=[TelemetryMiddleware(self.name, self.model)],
         )
 
-    def register_tools(self, tools: list[dict[str, Any]]) -> None:
+    @property
+    def agent(self) -> ChatAgent:
+        """Get the underlying ChatAgent instance.
+
+        Returns:
+            The ChatAgent used by this agent.
+        """
+        return self._agent
+
+    @property
+    def thread(self) -> AgentThread:
+        """Get or create conversation thread.
+
+        Returns:
+            AgentThread for conversation history.
+        """
+        if self._thread is None:
+            self._thread = self._agent.get_new_thread()
+        return self._thread
+
+    def register_tools(self, tools: list[Callable[..., Any]]) -> None:
         """Register tools for the agent to use.
 
+        Tools should be decorated with @ai_function.
+
         Args:
-            tools: List of tool definitions in OpenAI format.
+            tools: List of @ai_function decorated callables.
 
         Example:
-            agent.register_tools([
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "search_web",
-                        "description": "Search the web",
-                        "parameters": {...}
-                    }
-                }
-            ])
+            @ai_function
+            def search_web(query: str) -> str:
+                '''Search the web for information.'''
+                return f"Results for: {query}"
+
+            agent.register_tools([search_web])
         """
         self._tools = tools
+        # Recreate agent with new tools
+        self._agent = self._create_agent()
         logger.info(f"Agent '{self.name}' registered {len(tools)} tools")
 
     def clear_history(self) -> None:
         """Clear the conversation history."""
-        self._conversation_history.clear()
+        self._thread = None
         logger.debug(f"Cleared history for agent '{self.name}'")
 
     def get_history(self) -> list[dict[str, str]]:
@@ -170,72 +264,16 @@ class BaseAgent(ABC):
         Returns:
             List of message dictionaries.
         """
-        return self._conversation_history.copy()
-
-    async def _create_completion(
-        self,
-        messages: list[dict[str, str]],
-        **kwargs: Any,
-    ) -> ChatCompletion:
-        """Create a chat completion with telemetry.
-
-        Args:
-            messages: List of messages to send.
-            **kwargs: Additional parameters for the API call.
-
-        Returns:
-            ChatCompletion response.
-
-        Raises:
-            AgentError: If the API call fails.
-        """
-        with tracer.start_as_current_span("agent_completion") as span:
-            span.set_attributes(
-                create_span_attributes(
-                    agent_name=self.name,
-                    model=self.model,
-                )
-            )
-
-            try:
-                # Build request parameters
-                params = {
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": kwargs.get("temperature", self.temperature),
-                    "max_completion_tokens": kwargs.get("max_completion_tokens", self.max_completion_tokens),
-                }
-
-                # Add tools if registered
-                if self._tools:
-                    params["tools"] = self._tools
-                    params["tool_choice"] = kwargs.get("tool_choice", "auto")
-
-                response = await self.client.chat.completions.create(**params)
-
-                # Record token usage
-                if response.usage:
-                    span.set_attributes(
-                        create_span_attributes(
-                            prompt_tokens=response.usage.prompt_tokens,
-                            completion_tokens=response.usage.completion_tokens,
-                        )
-                    )
-                    logger.debug(
-                        f"Tokens used: {response.usage.prompt_tokens} prompt, "
-                        f"{response.usage.completion_tokens} completion"
-                    )
-
-                return response
-
-            except Exception as e:
-                record_exception(span, e)
-                logger.error(f"Agent '{self.name}' completion failed: {e}")
-                raise AgentError(
-                    f"Failed to create completion: {e}",
-                    agent_name=self.name,
-                    details={"model": self.model, "error": str(e)},
-                ) from e
+        if self._thread is None:
+            return []
+        # Convert thread messages to legacy format
+        messages = []
+        for msg in self._thread.messages:
+            messages.append({
+                "role": msg.role,
+                "content": msg.content if isinstance(msg.content, str) else str(msg.content),
+            })
+        return messages
 
     async def chat(
         self,
@@ -247,7 +285,7 @@ class BaseAgent(ABC):
         """Send a message and get a response.
 
         This method maintains conversation history for multi-turn
-        conversations.
+        conversations using AgentThread.
 
         Args:
             message: User message to send.
@@ -268,29 +306,79 @@ class BaseAgent(ABC):
                 )
             )
 
-            # Build messages list
-            messages = [{"role": "system", "content": self.system_prompt}]
+            try:
+                # Use thread for history, or run without thread
+                thread = self.thread if include_history else None
 
-            if include_history:
-                messages.extend(self._conversation_history)
+                response = await self._agent.run(
+                    message,
+                    thread=thread,
+                    temperature=kwargs.get("temperature", self.temperature),
+                    max_tokens=kwargs.get("max_tokens", self.max_tokens),
+                )
 
-            messages.append({"role": "user", "content": message})
+                result_text = response.text or ""
+                span.set_attribute("response_length", len(result_text))
 
-            # Get completion
-            response = await self._create_completion(messages, **kwargs)
+                return result_text
 
-            # Extract response text
-            assistant_message = response.choices[0].message.content or ""
+            except Exception as e:
+                record_exception(span, e)
+                logger.error(f"Agent '{self.name}' chat failed: {e}")
+                raise AgentError(
+                    f"Failed to complete chat: {e}",
+                    agent_name=self.name,
+                    details={"model": self.model, "error": str(e)},
+                ) from e
 
-            # Update history
-            self._conversation_history.append({"role": "user", "content": message})
-            self._conversation_history.append(
-                {"role": "assistant", "content": assistant_message}
+    async def chat_stream(
+        self,
+        message: str,
+        *,
+        include_history: bool = True,
+        **kwargs: Any,
+    ) -> AsyncIterable[str]:
+        """Send a message and stream the response.
+
+        Args:
+            message: User message to send.
+            include_history: Whether to include conversation history.
+            **kwargs: Additional parameters for the completion.
+
+        Yields:
+            Response text chunks.
+
+        Raises:
+            AgentError: If the completion fails.
+        """
+        with tracer.start_as_current_span("agent_chat_stream") as span:
+            span.set_attributes(
+                create_span_attributes(
+                    agent_name=self.name,
+                    model=self.model,
+                )
             )
 
-            span.set_attribute("response_length", len(assistant_message))
+            try:
+                thread = self.thread if include_history else None
 
-            return assistant_message
+                async for chunk in self._agent.run_stream(
+                    message,
+                    thread=thread,
+                    temperature=kwargs.get("temperature", self.temperature),
+                    max_tokens=kwargs.get("max_tokens", self.max_tokens),
+                ):
+                    if chunk.text:
+                        yield chunk.text
+
+            except Exception as e:
+                record_exception(span, e)
+                logger.error(f"Agent '{self.name}' stream failed: {e}")
+                raise AgentError(
+                    f"Failed to stream chat: {e}",
+                    agent_name=self.name,
+                    details={"model": self.model, "error": str(e)},
+                ) from e
 
     @abstractmethod
     async def run(self, task: str, **kwargs: Any) -> str:
@@ -309,9 +397,7 @@ class BaseAgent(ABC):
 
     async def close(self) -> None:
         """Clean up resources."""
-        if self._client:
-            await self._client.close()
-            self._client = None
+        self._thread = None
         logger.debug(f"Closed agent '{self.name}'")
 
     async def __aenter__(self) -> "BaseAgent":

@@ -1,12 +1,16 @@
 """Calculator tool for MCP integration.
 
 This module provides mathematical calculation capabilities
-that can be exposed via the MCP server.
+that can be exposed via the MCP server and used with Microsoft Agent Framework.
+
+Tools use the @ai_function decorator for integration with ChatAgent.
 """
 
 import logging
 import math
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+
+from agent_framework import ai_function
 
 from src.common.exceptions import ToolError
 from src.common.telemetry import create_span_attributes, get_tracer
@@ -17,10 +21,11 @@ tracer = get_tracer(__name__)
 OperationType = Literal["add", "subtract", "multiply", "divide", "power", "sqrt"]
 
 
+@ai_function
 async def calculate(
-    operation: OperationType,
-    a: float,
-    b: float | None = None,
+    operation: Annotated[OperationType, "The mathematical operation to perform"],
+    a: Annotated[float, "First operand"],
+    b: Annotated[float | None, "Second operand (not required for sqrt)"] = None,
 ) -> dict[str, Any]:
     """Perform mathematical calculations.
 

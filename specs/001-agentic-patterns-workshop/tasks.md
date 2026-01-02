@@ -355,6 +355,7 @@ Task T024: "Create tests/integration/test_scenario_01.py"
 6. Add US5 (Declarative) → Test → No-code configuration
 7. Add US6 (Discussions) → Test → Advanced multi-agent patterns
 8. Add US7 (Evaluation) → Test → **Full Workshop Complete!**
+9. **Refactor to Microsoft Agent Framework** → Align implementation with spec
 
 Each story adds a complete scenario module without breaking previous ones.
 
@@ -375,13 +376,85 @@ Then:
 
 ---
 
+## Phase 11: Refactor to Microsoft Agent Framework (Priority: P0 - Critical)
+
+**Goal**: Align implementation with spec by replacing raw OpenAI SDK with Microsoft Agent Framework
+
+**Rationale**: The spec (plan.md, research.md) specifies using `agent-framework` package, but implementation uses raw `openai` SDK. This creates a gap between documentation and code.
+
+**⚠️ BREAKING CHANGE**: This refactor will modify core agent classes and protocol servers
+
+### Core Agent Refactoring
+
+- [X] T068 [REFACTOR] Study agent-framework package API by running example code in notebooks/00_setup.ipynb
+- [X] T069 [REFACTOR] Replace BaseAgent with ChatAgent from agent-framework in src/agents/base_agent.py:
+  - Remove custom `AsyncAzureOpenAI` client management
+  - Use `AzureOpenAIChatClient` from `agent_framework.azure`
+  - Migrate `system_prompt` to `instructions` parameter
+  - Migrate `_tools` list to `tools` parameter with `@ai_function` decorators
+  - Preserve OpenTelemetry integration via middleware
+- [X] T070 [REFACTOR] Update ResearchAgent in src/agents/research_agent.py to extend refactored BaseAgent
+- [X] T071 [REFACTOR] Update ModeratorAgent in src/agents/moderator_agent.py to use ChatAgent patterns (N/A - uses AgentProtocol, doesn't extend BaseAgent)
+
+### Tool Definition Refactoring
+
+- [X] T072 [P] [REFACTOR] Convert src/tools/search_tool.py to use `@ai_function` decorator pattern
+- [X] T073 [P] [REFACTOR] Convert src/tools/calculator_tool.py to use `@ai_function` decorator pattern
+- [X] T074 [P] [REFACTOR] Convert src/tools/file_tool.py to use `@ai_function` decorator pattern
+
+### AG-UI Protocol Refactoring
+
+- [ ] T075 [REFACTOR] Replace custom AG-UI server in src/agents/agui_server.py with:
+  - Use `add_agent_framework_fastapi_endpoint()` from `agent_framework.ag_ui`
+  - Remove custom streaming event emitter (use built-in)
+  - Preserve custom event types if needed via middleware
+- [ ] T076 [REFACTOR] Update notebooks/02_agui_interface.ipynb to use new AG-UI integration
+
+### A2A Protocol Refactoring
+
+- [ ] T077 [REFACTOR] Evaluate if src/agents/a2a_server.py can use agent-framework-a2a package
+- [ ] T078 [REFACTOR] Update A2A server to leverage agent-framework-a2a if applicable, or document why custom implementation is needed
+
+### Declarative Agent Refactoring
+
+- [ ] T079 [REFACTOR] Update src/agents/declarative.py to use agent-framework-declarative package patterns
+- [ ] T080 [REFACTOR] Verify YAML configs in configs/agents/ work with agent-framework loader
+
+### Test Updates
+
+- [ ] T081 [P] [REFACTOR] Update tests/unit/test_common.py for new agent patterns
+- [ ] T082 [P] [REFACTOR] Update tests/contract/test_mcp_schemas.py for @ai_function tools
+- [ ] T083 [P] [REFACTOR] Update tests/contract/test_agui_schemas.py for agent-framework AG-UI
+- [ ] T084 [P] [REFACTOR] Update tests/contract/test_a2a_schemas.py if A2A changes
+- [X] T085 [REFACTOR] Run all integration tests to verify notebooks still execute (468/468 tests pass)
+
+### Notebook Updates
+
+- [ ] T086 [REFACTOR] Update notebooks/01_simple_agent_mcp.ipynb with ChatAgent examples
+- [ ] T087 [P] [REFACTOR] Update notebooks/03_a2a_protocol.ipynb if A2A implementation changed
+- [ ] T088 [P] [REFACTOR] Update notebooks/04_deterministic_workflows.ipynb for new agent interface
+- [ ] T089 [P] [REFACTOR] Update notebooks/05_declarative_agents.ipynb for agent-framework-declarative
+- [ ] T090 [P] [REFACTOR] Update notebooks/06_agent_discussions.ipynb for new ModeratorAgent
+- [ ] T091 [P] [REFACTOR] Update notebooks/07_evaluation_evolution.ipynb for new agent interface
+
+### Documentation Updates
+
+- [ ] T092 [P] [REFACTOR] Update README.md code examples to show agent-framework usage
+- [ ] T093 [P] [REFACTOR] Update docs/ARCHITECTURE.md to reflect agent-framework integration
+- [ ] T094 [REFACTOR] Verify .github/agents/copilot-instructions.md is accurate post-refactor
+
+**Checkpoint**: Implementation aligned with spec - Microsoft Agent Framework properly integrated ✅
+
+---
+
 ## Notes
 
 - [P] tasks = different files, no dependencies
 - [Story] label maps task to specific user story (US1-US7)
+- [REFACTOR] label marks Microsoft Agent Framework alignment tasks
 - Each scenario module is independently completable and testable
 - Notebooks are the primary delivery format - source modules support reuse
 - Commit after each task or logical group
 - Stop at any checkpoint to validate scenario independently
-- Estimated times: Setup 15min, Foundational 30min, each User Story 45-60min
-- Total: ~67 tasks across 10 phases
+- Estimated times: Setup 15min, Foundational 30min, each User Story 45-60min, Refactor 2-3 hours
+- Total: ~94 tasks across 11 phases

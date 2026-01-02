@@ -1,16 +1,20 @@
 """File operation tools for MCP integration.
 
 This module provides file read/write capabilities
-that can be exposed via the MCP server.
+that can be exposed via the MCP server and used with Microsoft Agent Framework.
 
 For workshop safety, all file operations are sandboxed
 to a specific workspace directory.
+
+Tools use the @ai_function decorator for integration with ChatAgent.
 """
 
 import logging
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+
+from agent_framework import ai_function
 
 from src.common.exceptions import ToolError
 from src.common.telemetry import create_span_attributes, get_tracer
@@ -60,9 +64,10 @@ def _get_safe_path(
     return resolved
 
 
+@ai_function
 async def read_file(
-    path: str,
-    encoding: Literal["utf-8", "ascii", "latin-1"] = "utf-8",
+    path: Annotated[str, "Relative path to the file within the workspace"],
+    encoding: Annotated[Literal["utf-8", "ascii", "latin-1"], "File encoding to use"] = "utf-8",
     workspace: Path | None = None,
 ) -> dict[str, Any]:
     """Read the contents of a file from the workspace.
@@ -146,10 +151,11 @@ async def read_file(
             ) from e
 
 
+@ai_function
 async def write_file(
-    path: str,
-    content: str,
-    mode: Literal["overwrite", "append"] = "overwrite",
+    path: Annotated[str, "Relative path to the file within the workspace"],
+    content: Annotated[str, "Content to write to the file"],
+    mode: Annotated[Literal["overwrite", "append"], "Write mode"] = "overwrite",
     workspace: Path | None = None,
 ) -> dict[str, Any]:
     """Write content to a file in the workspace.
@@ -221,9 +227,10 @@ async def write_file(
             ) from e
 
 
+@ai_function
 async def list_files(
-    directory: str = ".",
-    pattern: str = "*",
+    directory: Annotated[str, "Relative path to directory within workspace"] = ".",
+    pattern: Annotated[str, "Glob pattern to filter files"] = "*",
     workspace: Path | None = None,
 ) -> dict[str, Any]:
     """List files in a directory within the workspace.

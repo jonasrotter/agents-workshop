@@ -1,15 +1,19 @@
 """Search tools for MCP integration.
 
 This module provides web search and weather tools that can be
-exposed via the MCP server.
+exposed via the MCP server and used with Microsoft Agent Framework.
 
 The implementations are mock/simulated for workshop purposes,
 but follow the exact schemas defined in contracts/mcp-tools.md.
+
+Tools use the @ai_function decorator for integration with ChatAgent.
 """
 
 import logging
 import random
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+
+from agent_framework import ai_function
 
 from src.common.telemetry import create_span_attributes, get_tracer
 
@@ -84,9 +88,10 @@ MOCK_WEATHER = {
 }
 
 
+@ai_function
 async def search_web(
-    query: str,
-    max_results: int = 5,
+    query: Annotated[str, "Search query string"],
+    max_results: Annotated[int, "Maximum number of results to return (1-20)"] = 5,
 ) -> dict[str, Any]:
     """Search the web for information.
 
@@ -151,9 +156,10 @@ async def search_web(
         return response
 
 
+@ai_function
 async def get_weather(
-    location: str,
-    units: Literal["celsius", "fahrenheit"] = "celsius",
+    location: Annotated[str, "City name or location"],
+    units: Annotated[Literal["celsius", "fahrenheit"], "Temperature units"] = "celsius",
 ) -> dict[str, Any]:
     """Get current weather for a location.
 

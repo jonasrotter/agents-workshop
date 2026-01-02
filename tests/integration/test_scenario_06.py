@@ -267,7 +267,9 @@ class TestDiscussionProtocolIntegration:
         summary = await protocol.run_discussion()
 
         assert summary.topic == "Full Discussion Test"
-        assert summary.total_rounds <= 2
+        # max_rounds=2 specifies main discussion rounds
+        # Opening phase adds 1 additional round, so total can be up to 3
+        assert summary.total_rounds <= 3
         assert summary.total_turns > 0
 
     def test_callback_registration(self) -> None:
@@ -291,8 +293,8 @@ class TestDiscussionProtocolIntegration:
         protocol.on_turn(on_turn)
         protocol.on_round(on_round)
 
-        assert len(protocol._turn_callbacks) == 1
-        assert len(protocol._round_callbacks) == 1
+        assert len(protocol._on_turn_callbacks) == 1
+        assert len(protocol._on_round_callbacks) == 1
 
 
 # =============================================================================

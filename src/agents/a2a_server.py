@@ -372,6 +372,11 @@ class A2AServer:
         self._app: FastAPI | None = None
         self._task_manager = TaskManager()
 
+    @property
+    def agent_card(self) -> AgentCard:
+        """Get the Agent Card for this server."""
+        return self._build_agent_card()
+
     def _build_agent_card(self) -> AgentCard:
         """Build Agent Card from configuration."""
         return AgentCard(

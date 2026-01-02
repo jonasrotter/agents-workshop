@@ -274,7 +274,7 @@ class TestPromptTuningIntegration:
             
             Analyze the following data and provide insights.
             
-            Requirements:
+            Important: You must follow these guidelines:
             - Be concise
             - Use bullet points
             
@@ -467,7 +467,7 @@ class TestEndToEndScenarios:
         
         Summarize the following text in 3 bullet points.
         
-        Requirements:
+        Important: You must follow these rules:
         - Be concise
         - Focus on key points
         
