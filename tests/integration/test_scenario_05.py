@@ -439,27 +439,33 @@ class TestErrorStrategyMapping:
 
 
 class TestConfigFileLoading:
-    """Test loading actual config files from the project."""
+    """Test loading actual config files from the project.
+    
+    Note: Config files now use Agent Framework format (kind: Prompt).
+    These tests use AgentFactoryLoader instead of YAMLLoader.
+    """
 
     def test_load_research_agent_config(self) -> None:
-        """Load research_agent.yaml from project."""
-        from src.common.yaml_loader import YAMLLoader
+        """Load research_agent.yaml from project using AgentFactoryLoader."""
+        from src.agents.declarative import AgentFactoryLoader
+        from agent_framework import ChatAgent
         from pathlib import Path
         
         # Try to find project configs
-        possible_paths = [
-            Path("configs/agents/research_agent.yaml"),
-            Path("../configs/agents/research_agent.yaml"),
-            Path("../../configs/agents/research_agent.yaml"),
+        possible_dirs = [
+            Path("configs/agents"),
+            Path("../configs/agents"),
+            Path("../../configs/agents"),
         ]
         
-        loader = YAMLLoader()
         loaded = False
         
-        for config_path in possible_paths:
+        for agents_dir in possible_dirs:
+            config_path = agents_dir / "research_agent.yaml"
             if config_path.exists():
-                config = loader.load_agent(config_path)
-                assert config.name == "research_agent"
+                loader = AgentFactoryLoader(agents_dir=agents_dir)
+                agent = loader.load_agent(config_path)
+                assert isinstance(agent, ChatAgent)
                 loaded = True
                 break
         
@@ -468,23 +474,25 @@ class TestConfigFileLoading:
             pytest.skip("Config file not found in expected locations")
 
     def test_load_summarizer_agent_config(self) -> None:
-        """Load summarizer_agent.yaml from project."""
-        from src.common.yaml_loader import YAMLLoader
+        """Load summarizer_agent.yaml from project using AgentFactoryLoader."""
+        from src.agents.declarative import AgentFactoryLoader
+        from agent_framework import ChatAgent
         from pathlib import Path
         
-        possible_paths = [
-            Path("configs/agents/summarizer_agent.yaml"),
-            Path("../configs/agents/summarizer_agent.yaml"),
-            Path("../../configs/agents/summarizer_agent.yaml"),
+        possible_dirs = [
+            Path("configs/agents"),
+            Path("../configs/agents"),
+            Path("../../configs/agents"),
         ]
         
-        loader = YAMLLoader()
         loaded = False
         
-        for config_path in possible_paths:
+        for agents_dir in possible_dirs:
+            config_path = agents_dir / "summarizer_agent.yaml"
             if config_path.exists():
-                config = loader.load_agent(config_path)
-                assert config.name == "summarizer_agent"
+                loader = AgentFactoryLoader(agents_dir=agents_dir)
+                agent = loader.load_agent(config_path)
+                assert isinstance(agent, ChatAgent)
                 loaded = True
                 break
         

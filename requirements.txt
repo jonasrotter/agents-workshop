@@ -25,10 +25,12 @@ uvicorn==0.38.0
 pydantic_settings
 opentelemetry-api
 opentelemetry-sdk
+opentelemetry-instrumentation
 opentelemetry-instrumentation-logging
 azure-monitor-opentelemetry-exporter
 pytest 
 pytest-cov
 pytest-timeout
 pytest-asyncio
-ipykernel
+ipykernel>=6.0,<7.0
+a2a-server

@@ -3,12 +3,24 @@ Declarative agent loader from YAML configuration.
 
 Loads agent and workflow definitions from YAML files
 and instantiates them at runtime.
+
+Supports two YAML formats:
+1. Legacy format (for workshop custom configs):
+   - name, model.provider, model.deployment, instructions, tools
+2. Agent Framework format (for production):
+   - kind: Prompt, model.id, model.provider, instructions, tools
+
+Use load_agent_from_yaml() or AgentFactoryLoader for Agent Framework format.
+Use DeclarativeAgentLoader for legacy format (backward compatible).
 """
 
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 
 from opentelemetry import trace
+
+from agent_framework import ChatAgent
+from agent_framework_declarative import AgentFactory
 
 from src.common.yaml_loader import (
     AgentConfig,
@@ -244,3 +256,146 @@ def load_workflows_from_config(
     
     workflow_loader = DeclarativeWorkflowLoader(workflows_dir, agent_loader)
     return workflow_loader.load_all()
+
+
+# =============================================================================
+# Agent Framework Declarative Support (New Format)
+# =============================================================================
+
+
+class AgentFactoryLoader:
+    """
+    Load agents using agent_framework_declarative AgentFactory.
+    
+    This loader uses the official Agent Framework YAML format:
+    - kind: Prompt
+    - model.id, model.provider, model.options
+    - instructions, tools
+    
+    Example YAML:
+        kind: Prompt
+        name: my_agent
+        model:
+          id: gpt-4.1-mini
+          provider: AzureOpenAI
+          options:
+            temperature: 0.7
+        instructions: |
+          You are a helpful assistant.
+        tools:
+          - kind: function
+            name: search_web
+    """
+    
+    def __init__(
+        self,
+        agents_dir: Path | str = "configs/agents",
+        bindings: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """
+        Initialize loader with agents directory.
+        
+        Args:
+            agents_dir: Directory containing agent YAML files
+            bindings: Optional dict mapping tool names to callable functions
+        """
+        self.agents_dir = Path(agents_dir)
+        self._factory = AgentFactory(bindings=bindings)
+        self._agents: dict[str, ChatAgent] = {}
+    
+    @tracer.start_as_current_span("agent_factory_loader.load_agent")
+    def load_agent(self, path: Path | str) -> ChatAgent:
+        """
+        Load a single agent from YAML file using AgentFactory.
+        
+        Args:
+            path: Path to the agent YAML file
+            
+        Returns:
+            ChatAgent instance from agent_framework
+        """
+        path = Path(path)
+        agent = self._factory.create_agent_from_yaml_path(path)
+        
+        # Extract name from agent or path
+        name = getattr(agent, "name", None) or path.stem
+        self._agents[name] = agent
+        return agent
+    
+    @tracer.start_as_current_span("agent_factory_loader.load_all")
+    def load_all(self) -> dict[str, ChatAgent]:
+        """
+        Load all agents from the agents directory.
+        
+        Returns:
+            Dict mapping agent names to ChatAgent instances
+        """
+        for yaml_file in self.agents_dir.glob("*.yaml"):
+            try:
+                self.load_agent(yaml_file)
+            except Exception as e:
+                # Log but continue loading other agents
+                span = trace.get_current_span()
+                span.record_exception(e)
+                span.set_attribute("failed_file", str(yaml_file))
+        
+        return self._agents
+    
+    def get_agent(self, name: str) -> Optional[ChatAgent]:
+        """Get a loaded agent by name."""
+        return self._agents.get(name)
+    
+    def list_agents(self) -> list[str]:
+        """List all loaded agent names."""
+        return list(self._agents.keys())
+    
+    @property
+    def agents(self) -> dict[str, ChatAgent]:
+        """Get all loaded agents."""
+        return self._agents
+
+
+def load_agent_from_yaml(
+    yaml_path: Path | str,
+    bindings: Optional[dict[str, Any]] = None,
+) -> ChatAgent:
+    """
+    Load a single agent from YAML using AgentFactory.
+    
+    This is the recommended way to load agents from YAML configuration
+    using the official Agent Framework format.
+    
+    Args:
+        yaml_path: Path to the agent YAML file
+        bindings: Optional dict mapping tool names to callable functions
+        
+    Returns:
+        ChatAgent instance ready for use
+        
+    Example:
+        agent = load_agent_from_yaml("configs/agents/research_agent.yaml")
+        response = await agent.run("What is the weather?")
+    """
+    factory = AgentFactory(bindings=bindings)
+    return factory.create_agent_from_yaml_path(Path(yaml_path))
+
+
+def load_agents_with_factory(
+    agents_dir: Path | str = "configs/agents",
+    bindings: Optional[dict[str, Any]] = None,
+) -> dict[str, ChatAgent]:
+    """
+    Load all agents from directory using AgentFactory.
+    
+    This is the recommended way to load multiple agents from YAML
+    using the official Agent Framework format.
+    
+    Args:
+        agents_dir: Directory containing agent YAML files
+        bindings: Optional dict mapping tool names to callable functions
+        
+    Returns:
+        Dict mapping agent names to ChatAgent instances
+    """
+    loader = AgentFactoryLoader(agents_dir, bindings=bindings)
+    return loader.load_all()

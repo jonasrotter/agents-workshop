@@ -618,3 +618,194 @@ class TestErrorHandling:
             fallback_value="default",
         )
         assert config.fallback_value == "default"
+
+
+# =============================================================================
+# Tests for Agent Framework Declarative (New Format)
+# =============================================================================
+
+# Note: These tests require Azure OpenAI credentials to create real ChatAgent instances.
+# They use the AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY from .env
+# The AgentFactory requires a real connection to create agents.
+
+def _has_azure_credentials() -> bool:
+    """Check if Azure OpenAI credentials are available."""
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    return bool(os.getenv("AZURE_OPENAI_ENDPOINT") and os.getenv("AZURE_OPENAI_API_KEY"))
+
+def _get_azure_endpoint() -> str:
+    """Get Azure OpenAI endpoint from environment."""
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    return os.getenv("AZURE_OPENAI_ENDPOINT", "")
+
+
+requires_azure = pytest.mark.skipif(
+    not _has_azure_credentials(),
+    reason="Requires Azure OpenAI credentials (AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY)"
+)
+
+
+class TestAgentFactoryLoader:
+    """Test AgentFactoryLoader class for agent-framework-declarative format."""
+
+    @requires_azure
+    def test_load_agent_new_format(self, tmp_path: Path) -> None:
+        """Load agent using new kind: Prompt format."""
+        from src.agents.declarative import AgentFactoryLoader
+        
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        
+        agent_file = agents_dir / "test_agent.yaml"
+        agent_file.write_text(f"""
+kind: Prompt
+name: test_agent
+description: A test agent for unit testing
+model:
+  id: gpt-4.1-mini
+  provider: AzureOpenAI.Chat
+  connection:
+    kind: remote
+    endpoint: {_get_azure_endpoint()}
+  options:
+    temperature: 0.7
+instructions: |
+  You are a helpful test agent for unit testing purposes.
+tools: []
+""")
+        
+        loader = AgentFactoryLoader(agents_dir)
+        agent = loader.load_agent(agent_file)
+        
+        # Agent should be a ChatAgent from agent_framework
+        assert agent is not None
+        assert loader.get_agent("test_agent") is agent
+
+    @requires_azure
+    def test_load_all_new_format(self, tmp_path: Path) -> None:
+        """Load all agents using new format."""
+        from src.agents.declarative import AgentFactoryLoader
+        
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        
+        endpoint = _get_azure_endpoint()
+        for i in range(2):
+            agent_file = agents_dir / f"agent_{i}.yaml"
+            agent_file.write_text(f"""
+kind: Prompt
+name: agent_{i}
+model:
+  id: gpt-4.1-mini
+  provider: AzureOpenAI.Chat
+  connection:
+    kind: remote
+    endpoint: {endpoint}
+instructions: This is test agent number {i} for testing.
+tools: []
+""")
+        
+        loader = AgentFactoryLoader(agents_dir)
+        agents = loader.load_all()
+        
+        assert len(agents) == 2
+        assert "agent_0" in agents
+        assert "agent_1" in agents
+
+    @requires_azure
+    def test_list_agents_new_format(self, tmp_path: Path) -> None:
+        """List loaded agent names."""
+        from src.agents.declarative import AgentFactoryLoader
+        
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        
+        agent_file = agents_dir / "my_agent.yaml"
+        agent_file.write_text(f"""
+kind: Prompt
+name: my_agent
+model:
+  id: gpt-4.1-mini
+  provider: AzureOpenAI.Chat
+  connection:
+    kind: remote
+    endpoint: {_get_azure_endpoint()}
+instructions: This is my test agent for listing in tests.
+tools: []
+""")
+        
+        loader = AgentFactoryLoader(agents_dir)
+        loader.load_all()
+        
+        names = loader.list_agents()
+        assert "my_agent" in names
+
+    def test_loader_initialization(self, tmp_path: Path) -> None:
+        """Test AgentFactoryLoader can be initialized."""
+        from src.agents.declarative import AgentFactoryLoader
+        
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        
+        loader = AgentFactoryLoader(agents_dir)
+        assert loader.agents_dir == agents_dir
+        assert loader.list_agents() == []
+
+
+class TestLoadAgentFromYaml:
+    """Test load_agent_from_yaml convenience function."""
+
+    @requires_azure
+    def test_load_single_agent(self, tmp_path: Path) -> None:
+        """Load single agent with convenience function."""
+        from src.agents.declarative import load_agent_from_yaml
+        
+        agent_file = tmp_path / "agent.yaml"
+        agent_file.write_text(f"""
+kind: Prompt
+name: convenience_agent
+model:
+  id: gpt-4.1-mini
+  provider: AzureOpenAI.Chat
+  connection:
+    kind: remote
+    endpoint: {_get_azure_endpoint()}
+instructions: This agent tests the convenience function.
+tools: []
+""")
+        
+        agent = load_agent_from_yaml(agent_file)
+        assert agent is not None
+
+
+class TestLoadAgentsWithFactory:
+    """Test load_agents_with_factory convenience function."""
+
+    @requires_azure
+    def test_load_all_agents(self, tmp_path: Path) -> None:
+        """Load all agents with convenience function."""
+        from src.agents.declarative import load_agents_with_factory
+        
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        
+        agent_file = agents_dir / "factory_agent.yaml"
+        agent_file.write_text(f"""
+kind: Prompt
+name: factory_agent
+model:
+  id: gpt-4.1-mini
+  provider: AzureOpenAI.Chat
+  connection:
+    kind: remote
+    endpoint: {_get_azure_endpoint()}
+instructions: This agent tests factory loading convenience.
+tools: []
+""")
+        
+        agents = load_agents_with_factory(agents_dir)
+        assert "factory_agent" in agents

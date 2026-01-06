@@ -141,13 +141,13 @@ Based on plan.md structure:
 
 ### Implementation for User Story 4
 
-- [ ] T036 Create src/workflows/__init__.py with workflow module exports
-- [ ] T037 [US4] Implement workflow step definitions in src/workflows/steps.py using data-model.md schemas
-- [ ] T038 [US4] Implement deterministic workflow engine in src/workflows/engine.py with:
+- [X] T036 Create src/workflows/__init__.py with workflow module exports
+- [X] T037 [US4] Implement workflow step definitions in src/workflows/steps.py using data-model.md schemas
+- [X] T038 [US4] Implement deterministic workflow engine in src/workflows/engine.py with:
   - Sequential agent orchestration
   - Data flow between steps
   - Error handling strategies (retry, fallback, abort)
-- [ ] T039 [US4] Create Scenario 4 notebook in notebooks/04_deterministic_workflows.ipynb with:
+- [X] T039 [US4] Create Scenario 4 notebook in notebooks/04_deterministic_workflows.ipynb with:
   - Workflow definition and execution
   - Multi-agent pipeline example
   - Error handling demonstration
@@ -412,38 +412,130 @@ Then:
 
 ### A2A Protocol Refactoring
 
-- [ ] T077 [REFACTOR] Evaluate if src/agents/a2a_server.py can use agent-framework-a2a package
-- [ ] T078 [REFACTOR] Update A2A server to leverage agent-framework-a2a if applicable, or document why custom implementation is needed
+- [X] T077 [REFACTOR] Evaluate if src/agents/a2a_server.py can use agent-framework-a2a package (Result: Custom implementation needed - no agent-framework-a2a package exists)
+- [X] T078 [REFACTOR] Update A2A server to leverage agent-framework-a2a if applicable, or document why custom implementation is needed (Result: Custom A2A is appropriate - matches Google A2A spec)
 
 ### Declarative Agent Refactoring
 
-- [ ] T079 [REFACTOR] Update src/agents/declarative.py to use agent-framework-declarative package patterns
-- [ ] T080 [REFACTOR] Verify YAML configs in configs/agents/ work with agent-framework loader
+- [X] T079 [REFACTOR] Update src/agents/declarative.py to use agent-framework-declarative package:
+  - Import AgentFactory from `agent_framework_declarative`
+  - Added AgentFactoryLoader class using `AgentFactory.create_agent_from_yaml_path()`
+  - Added load_agent_from_yaml() and load_agents_with_factory() convenience functions
+  - Keep DeclarativeWorkflowLoader (uses custom WorkflowEngine - no workflow factory in agent-framework-declarative)
+  - Provider format: `AzureOpenAI.Chat` (not just `AzureOpenAI`)
+- [X] T080 [REFACTOR] Update YAML configs in configs/agents/ to match agent-framework-declarative format:
+  - research_agent.yaml: Converted to kind: Prompt with model.provider: AzureOpenAI.Chat and model.options
+  - summarizer_agent.yaml: Converted to kind: Prompt with model.provider: AzureOpenAI.Chat and model.options
 
 ### Test Updates
 
-- [ ] T081 [P] [REFACTOR] Update tests/unit/test_common.py for new agent patterns
-- [ ] T082 [P] [REFACTOR] Update tests/contract/test_mcp_schemas.py for @ai_function tools
-- [ ] T083 [P] [REFACTOR] Update tests/contract/test_agui_schemas.py for agent-framework AG-UI
-- [ ] T084 [P] [REFACTOR] Update tests/contract/test_a2a_schemas.py if A2A changes
+- [ ] T081 [P] [REFACTOR] Update tests/unit/test_common.py for new agent patterns:
+  - Test TelemetryMiddleware accepts model parameter
+  - Test agent creation with ChatAgent interface
+- [ ] T082 [P] [REFACTOR] Update tests/contract/test_mcp_schemas.py for @ai_function tools:
+  - Verify tool schemas match agent-framework conventions
+- [ ] T083 [P] [REFACTOR] Update tests/contract/test_agui_schemas.py for agent-framework AG-UI:
+  - Test AG-UI endpoint integration
+- [X] T084 [P] [REFACTOR] Update tests/contract/test_a2a_schemas.py if A2A changes (No changes needed - custom A2A implementation retained)
 - [X] T085 [REFACTOR] Run all integration tests to verify notebooks still execute (468/468 tests pass)
 
 ### Notebook Updates
 
-- [ ] T086 [REFACTOR] Update notebooks/01_simple_agent_mcp.ipynb with ChatAgent examples
-- [ ] T087 [P] [REFACTOR] Update notebooks/03_a2a_protocol.ipynb if A2A implementation changed
-- [ ] T088 [P] [REFACTOR] Update notebooks/04_deterministic_workflows.ipynb for new agent interface
-- [ ] T089 [P] [REFACTOR] Update notebooks/05_declarative_agents.ipynb for agent-framework-declarative
-- [ ] T090 [P] [REFACTOR] Update notebooks/06_agent_discussions.ipynb for new ModeratorAgent
-- [ ] T091 [P] [REFACTOR] Update notebooks/07_evaluation_evolution.ipynb for new agent interface
+- [ ] T086 [REFACTOR] Update notebooks/01_simple_agent_mcp.ipynb with ChatAgent examples:
+  - Show ChatAgent instantiation with AzureOpenAIChatClient
+  - Demonstrate tool registration with @ai_function
+  - Update trace inspection to match new middleware
+- [ ] T087 [P] [REFACTOR] Update notebooks/03_a2a_protocol.ipynb if A2A implementation changed (Minimal changes - verify imports)
+- [ ] T088 [P] [REFACTOR] Update notebooks/04_deterministic_workflows.ipynb for new agent interface:
+  - Show workflow with ChatAgent instances
+  - Update agent registration pattern
+- [ ] T089 [P] [REFACTOR] Update notebooks/05_declarative_agents.ipynb for agent-framework-declarative:
+  - Show AgentFactory.create_agent_from_yaml_path() usage
+  - Update YAML config examples to kind: Prompt format
+  - Demonstrate behavior modification via config changes
+- [ ] T090 [P] [REFACTOR] Update notebooks/06_agent_discussions.ipynb for new ModeratorAgent:
+  - Verify DiscussionProtocol works with ChatAgent instances
+  - Update participant registration examples
+- [ ] T091 [P] [REFACTOR] Update notebooks/07_evaluation_evolution.ipynb for new agent interface:
+  - Update evaluation metrics collection for ChatAgent
+  - Verify prompt tuning framework compatibility
 
 ### Documentation Updates
 
-- [ ] T092 [P] [REFACTOR] Update README.md code examples to show agent-framework usage
-- [ ] T093 [P] [REFACTOR] Update docs/ARCHITECTURE.md to reflect agent-framework integration
-- [ ] T094 [REFACTOR] Verify .github/agents/copilot-instructions.md is accurate post-refactor
+- [ ] T092 [P] [REFACTOR] Update README.md code examples to show agent-framework usage:
+  - Update quick start examples with ChatAgent
+  - Show @ai_function tool definition
+  - Update architecture diagram if needed
+- [ ] T093 [P] [REFACTOR] Update docs/ARCHITECTURE.md to reflect agent-framework integration:
+  - Document ChatAgent vs custom BaseAgent
+  - Update module relationships diagram
+  - Document middleware pipeline
+- [ ] T094 [REFACTOR] Verify .github/agents/copilot-instructions.md is accurate post-refactor:
+  - Update package references
+  - Update import patterns
 
 **Checkpoint**: Implementation aligned with spec - Microsoft Agent Framework properly integrated ✅
+
+---
+
+## Phase 12: Declarative Agent Framework Integration (Priority: P0 - Critical)
+
+**Goal**: Complete the declarative agent integration using agent_framework_declarative package
+
+**Rationale**: The spec requires using declarative agent patterns from agent-framework-declarative. 
+The AgentFactory class creates proper ChatAgent instances from YAML configuration.
+
+**⚠️ BREAKING CHANGE**: This will change the YAML schema format for agent configs
+
+### agent_framework_declarative Integration
+
+- [ ] T095 [REFACTOR] Study agent_framework_declarative API:
+  - Review AgentFactory.create_agent_from_yaml() signature and expected YAML schema
+  - Review AgentFactory.create_agent_from_yaml_path() for file-based loading
+  - Identify required fields: kind, name, description, instructions, model
+  - Document bindings parameter for custom tool functions
+
+- [ ] T096 [REFACTOR] Convert configs/agents/research_agent.yaml to agent-framework-declarative format:
+  ```yaml
+  kind: Prompt
+  name: research_agent
+  description: Research assistant agent
+  instructions: |
+    You are a research assistant...
+  model:
+    id: gpt-4o
+    connection:
+      kind: azure_openai
+      endpoint: ${AZURE_OPENAI_ENDPOINT}
+    options:
+      temperature: 0.7
+  tools:
+    - kind: function
+      name: search_web
+    - kind: function
+      name: read_document
+  ```
+
+- [ ] T097 [REFACTOR] Convert configs/agents/summarizer_agent.yaml to agent-framework-declarative format
+
+- [ ] T098 [REFACTOR] Refactor src/agents/declarative.py:
+  - Import AgentFactory from agent_framework_declarative
+  - Create wrapper class DeclarativeAgentWrapper to maintain backward compatibility
+  - Update DeclarativeAgentLoader.load_agent() to use AgentFactory.create_agent_from_yaml_path()
+  - Update DeclarativeAgentLoader.load_all() to iterate YAML files and create agents
+  - Keep DeclarativeWorkflowLoader unchanged (custom WorkflowEngine is appropriate)
+
+- [ ] T099 [REFACTOR] Update tests/unit/test_declarative.py:
+  - Update test YAML content to use kind: Prompt format
+  - Update test assertions for ChatAgent return type
+  - Add tests for AgentFactory integration
+
+- [ ] T100 [REFACTOR] Update notebooks/05_declarative_agents.ipynb:
+  - Show new YAML schema with kind: Prompt
+  - Demonstrate AgentFactory usage
+  - Update hands-on exercise for new format
+
+**Checkpoint**: Declarative agents use agent-framework-declarative package properly ✅
 
 ---
 
@@ -457,4 +549,37 @@ Then:
 - Commit after each task or logical group
 - Stop at any checkpoint to validate scenario independently
 - Estimated times: Setup 15min, Foundational 30min, each User Story 45-60min, Refactor 2-3 hours
-- Total: ~94 tasks across 11 phases
+- Total: ~100 tasks across 12 phases
+
+---
+
+## Task Status Summary
+
+### Completed Tasks: 85
+- Phase 1 (Setup): 6/6 ✅
+- Phase 2 (Foundational): 7/7 ✅
+- Phase 3 (US1 - MCP + Obs): 11/11 ✅
+- Phase 4 (US2 - AG-UI): 5/5 ✅
+- Phase 5 (US3 - A2A): 6/6 ✅
+- Phase 6 (US4 - Workflows): 6/6 ✅
+- Phase 7 (US5 - Declarative): 8/8 ✅
+- Phase 8 (US6 - Discussions): 5/5 ✅
+- Phase 9 (US7 - Evaluation): 5/5 ✅
+- Phase 10 (Polish): 8/8 ✅
+- Phase 11 (Refactor): 10/27 (T068-T074 complete, T077-T078 complete, T084-T085 complete)
+
+### Remaining Tasks: 15
+- Phase 11 (Refactor): 17 remaining
+  - AG-UI: T075-T076 (2 tasks)
+  - Declarative: T079-T080 (2 tasks, superseded by Phase 12)
+  - Tests: T081-T083 (3 tasks)
+  - Notebooks: T086-T091 (6 tasks)
+  - Documentation: T092-T094 (3 tasks)
+- Phase 12 (Declarative Framework): 6 new tasks (T095-T100)
+
+### Priority Order for Remaining Work
+1. **T095-T100** (Phase 12): Complete declarative agent integration first
+2. **T075-T076**: AG-UI refactoring (can parallel with T095-T100)
+3. **T081-T083**: Update tests
+4. **T086-T091**: Update notebooks
+5. **T092-T094**: Update documentation

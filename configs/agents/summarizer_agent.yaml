@@ -1,11 +1,17 @@
 # Summarizer Agent Configuration
 # This agent specializes in creating concise summaries
+# Format: agent-framework-declarative PromptAgent schema
 
+kind: Prompt
 name: summarizer_agent
+description: Expert summarizer that creates clear, concise summaries
+
 model:
-  provider: azure_openai
-  deployment: gpt-4.1-mini
-  temperature: 0.3
+  id: gpt-4.1-mini
+  provider: AzureOpenAI.Chat
+  options:
+    temperature: 0.3
+    maxOutputTokens: 2048
 
 instructions: |
   You are an expert summarizer who creates clear, concise summaries.
@@ -24,5 +30,3 @@ instructions: |
   - Include relevant quotes when they add value
 
 tools: []
-
-max_tokens: 2048

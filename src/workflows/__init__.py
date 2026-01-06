@@ -13,6 +13,16 @@ Exports:
     - ErrorStrategy: Error handling strategies (retry, fallback, abort)
     - WorkflowResult: Result of workflow execution
     - create_workflow: Factory for creating workflows from definitions
+    
+Enhanced Builders:
+    - SequentialBuilder: Fluent builder for sequential workflows
+    - ConcurrentBuilder: Fluent builder for parallel workflows
+    - GroupChatBuilder: Fluent builder for multi-agent discussions
+    - PipelineBuilder: Fluent builder for data transformation pipelines
+    - sequential: Factory function for SequentialBuilder
+    - concurrent: Factory function for ConcurrentBuilder
+    - group_chat: Factory function for GroupChatBuilder
+    - pipeline: Factory function for PipelineBuilder
 """
 
 from src.workflows.steps import (
@@ -28,6 +38,17 @@ from src.workflows.engine import (
     WorkflowContext,
     ErrorStrategy,
     create_workflow,
+    WorkflowBuilder,
+)
+from src.workflows.builders import (
+    SequentialBuilder,
+    ConcurrentBuilder,
+    GroupChatBuilder,
+    PipelineBuilder,
+    sequential,
+    concurrent,
+    group_chat,
+    pipeline,
 )
 
 __all__ = [
@@ -43,4 +64,14 @@ __all__ = [
     "WorkflowContext",
     "ErrorStrategy",
     "create_workflow",
+    "WorkflowBuilder",
+    # Enhanced Builders
+    "SequentialBuilder",
+    "ConcurrentBuilder",
+    "GroupChatBuilder",
+    "PipelineBuilder",
+    "sequential",
+    "concurrent",
+    "group_chat",
+    "pipeline",
 ]

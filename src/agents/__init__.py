@@ -8,6 +8,17 @@ This module exports agent implementations:
 - A2AServer: A2A protocol server for agent interoperability
 - create_agui_server: Factory function for AG-UI server
 - create_a2a_server: Factory function for A2A server
+- DeclarativeAgent: Agent loaded from YAML (legacy format)
+- DeclarativeAgentLoader: Load agents from YAML (legacy format)
+- AgentFactoryLoader: Load agents using AgentFactory (new format)
+- load_agent_from_yaml: Load single agent using AgentFactory
+
+Agent Factories (thread-safe):
+- create_research_agent: Factory for research agents
+- create_summarizer_agent: Factory for summarization agents
+- create_analysis_agent: Factory for analysis agents
+- create_coordinator_agent: Factory for coordinator agents
+- create_custom_agent: Factory for custom agents
 
 Example:
     from src.agents import ResearchAgent, AGUIServer, A2AServer
@@ -21,6 +32,15 @@ Example:
     # For agent-to-agent
     a2a = A2AServer(agent=agent, name="Research Agent")
     a2a_app = a2a.create_app()
+    
+    # For declarative agents (new format)
+    from src.agents import load_agent_from_yaml
+    agent = load_agent_from_yaml("configs/agents/research_agent.yaml")
+    
+    # For thread-safe factory-created agents
+    from src.agents import create_research_agent, create_summarizer_agent
+    research = create_research_agent()
+    summarizer = create_summarizer_agent()
 """
 
 from src.agents.base_agent import BaseAgent
@@ -39,6 +59,25 @@ from src.agents.a2a_server import (
     TaskState,
     Task,
 )
+from src.agents.declarative import (
+    DeclarativeAgent,
+    DeclarativeAgentLoader,
+    DeclarativeWorkflowLoader,
+    AgentFactoryLoader,
+    load_agent_from_yaml,
+    load_agents_from_config,
+    load_agents_with_factory,
+    load_workflows_from_config,
+)
+from src.agents.factories import (
+    create_research_agent,
+    create_summarizer_agent,
+    create_analysis_agent,
+    create_coordinator_agent,
+    create_custom_agent,
+    get_agent_factory,
+    AGENT_FACTORIES,
+)
 
 __all__ = [
     "BaseAgent",
@@ -53,4 +92,21 @@ __all__ = [
     "Skill",
     "TaskState",
     "Task",
+    # Declarative agents
+    "DeclarativeAgent",
+    "DeclarativeAgentLoader",
+    "DeclarativeWorkflowLoader",
+    "AgentFactoryLoader",
+    "load_agent_from_yaml",
+    "load_agents_from_config",
+    "load_agents_with_factory",
+    "load_workflows_from_config",
+    # Agent factories
+    "create_research_agent",
+    "create_summarizer_agent",
+    "create_analysis_agent",
+    "create_coordinator_agent",
+    "create_custom_agent",
+    "get_agent_factory",
+    "AGENT_FACTORIES",
 ]
