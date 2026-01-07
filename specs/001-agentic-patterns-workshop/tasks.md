@@ -404,11 +404,11 @@ Then:
 
 ### AG-UI Protocol Refactoring
 
-- [ ] T075 [REFACTOR] Replace custom AG-UI server in src/agents/agui_server.py with:
-  - Use `add_agent_framework_fastapi_endpoint()` from `agent_framework.ag_ui`
-  - Remove custom streaming event emitter (use built-in)
-  - Preserve custom event types if needed via middleware
-- [ ] T076 [REFACTOR] Update notebooks/02_agui_interface.ipynb to use new AG-UI integration
+> ⚠️ **SUPERSEDED**: T075-T076 are replaced by spec `002-agui-refactoring` (tasks T201-T219).
+> See [specs/002-agui-refactoring/tasks.md](../002-agui-refactoring/tasks.md) for detailed implementation tasks.
+
+- [~] T075 [REFACTOR] ~~Replace custom AG-UI server in src/agents/agui_server.py~~ → See T204-T210 in spec 002
+- [~] T076 [REFACTOR] ~~Update notebooks/02_agui_interface.ipynb~~ → See T212 in spec 002
 
 ### A2A Protocol Refactoring
 
