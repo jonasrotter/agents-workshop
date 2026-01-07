@@ -417,15 +417,17 @@ Then:
 
 ### Declarative Agent Refactoring
 
-- [X] T079 [REFACTOR] Update src/agents/declarative.py to use agent-framework-declarative package:
+- [X] T079 [REFACTOR] Update src/agents/declarative.py to use agent-framework-declarative package (PARTIAL - see T095-T100 for full integration):
   - Import AgentFactory from `agent_framework_declarative`
   - Added AgentFactoryLoader class using `AgentFactory.create_agent_from_yaml_path()`
   - Added load_agent_from_yaml() and load_agents_with_factory() convenience functions
   - Keep DeclarativeWorkflowLoader (uses custom WorkflowEngine - no workflow factory in agent-framework-declarative)
   - Provider format: `AzureOpenAI.Chat` (not just `AzureOpenAI`)
-- [X] T080 [REFACTOR] Update YAML configs in configs/agents/ to match agent-framework-declarative format:
+  - **Note**: T095-T100 complete full integration with tests and notebook updates
+- [X] T080 [REFACTOR] Update YAML configs in configs/agents/ to match agent-framework-declarative format (PARTIAL - see T096-T097 for complete conversion):
   - research_agent.yaml: Converted to kind: Prompt with model.provider: AzureOpenAI.Chat and model.options
   - summarizer_agent.yaml: Converted to kind: Prompt with model.provider: AzureOpenAI.Chat and model.options
+  - **Note**: T096-T097 complete the YAML schema alignment
 
 ### Test Updates
 
@@ -539,6 +541,224 @@ The AgentFactory class creates proper ChatAgent instances from YAML configuratio
 
 ---
 
+## Phase 13: Agent Discussion Framework Refactoring (Priority: P0 - Critical)
+
+**Goal**: Align agent discussion implementation with Microsoft Agent Framework Magentic patterns
+
+**Rationale**: The current discussion implementation uses custom classes (`ModeratorAgent`, `DiscussionProtocol`, `AgentProtocol`) instead of the Microsoft Agent Framework's orchestration primitives (`ChatAgent`, `MagenticBuilder`, Magentic events). This creates educational inconsistency with other scenarios.
+
+**Gap Analysis**:
+| Component | Current | Expected (per spec) |
+|-----------|---------|---------------------|
+| Agent base | Custom `AgentProtocol` | `ChatAgent` from agent-framework |
+| Moderator | Custom `ModeratorAgent` | `ChatAgent` with moderation instructions |
+| Events | Custom `DiscussionTurn`, `RoundResult` | `MagenticAgentMessageEvent`, `WorkflowEvent` |
+| Orchestration | Custom `DiscussionProtocol` | `MagenticBuilder` for multi-agent orchestration |
+| Streaming | Not implemented | `MagenticAgentDeltaEvent` |
+
+### Phase 13.1: Research & Design
+
+- [X] T101 [RESEARCH] Study agent-framework Magentic APIs in notebooks/00_setup.ipynb:
+  - Review MagenticBuilder class and multi-agent orchestration patterns
+  - Document MagenticAgentDeltaEvent, MagenticAgentMessageEvent, MagenticFinalResultEvent schemas
+  - Identify how WorkflowEvent maps to discussion rounds
+  - Review MagenticOrchestratorMessageEvent for moderator coordination
+  - Test HostedWebSearchTool integration for research discussions
+  - **Result**: Magentic patterns ARE available in agent-framework package:
+    - **GroupChatBuilder** - Best fit for structured multi-agent discussions
+      - `set_manager(agent)` - LLM-based speaker selection (maps to ModeratorAgent)
+      - `set_select_speakers_func(fn)` - Function-based selection (for deterministic rounds)
+      - `participants([agent1, agent2])` - Add discussion participants
+      - `with_max_rounds(n)` - Limit discussion rounds
+      - `with_request_info()` - HITL pause before agent responses
+      - GroupChatStateSnapshot contains: task, participants, conversation, history, round_index
+    - **MagenticBuilder** - For complex task planning workflows (less suited for debates)
+      - `participants(**agents)` - Named agent roles
+      - `with_standard_manager(chat_client, max_round_count, max_stall_count)`
+      - `with_plan_review(enable=True)` - HITL plan approval
+      - `with_checkpointing(storage)` - Resume capability
+    - **Key types for discussion mapping**:
+      - GroupChatTurn → maps to DiscussionTurn
+      - ChatMessage → maps to agent responses
+      - WorkflowEvent → base event for streaming
+      - GroupChatStateSnapshot → round state for speaker selection
+    - **Recommendation**: Use GroupChatBuilder with `set_manager()` for ModeratorAgent pattern
+
+- [X] T102 [DESIGN] Define mapping from current to agent-framework types:
+  - DiscussionTurn → GroupChatTurn (speaker, content, timestamp)
+  - RoundResult → GroupChatStateSnapshot (round_index, history, conversation)
+  - ModeratorAgent → ChatAgent as manager in GroupChatBuilder.set_manager()
+  - AgentProtocol → ChatAgent interface (already compatible)
+  - DiscussionConfig → GroupChatBuilder configuration methods
+  - **Type mapping documented in research.md**
+
+- [X] T103 [DESIGN] Design event streaming architecture:
+  - GroupChatBuilder events map to AG-UI event types (see data-model.md Section 8)
+  - WorkflowStartedEvent → RUN_STARTED, GroupChatTurn → TEXT_MESSAGE_*, WorkflowFinishedEvent → RUN_FINISHED
+  - Event adapter function `stream_discussion_to_agui()` documented with full implementation
+  - FastAPI endpoint integration pattern for /discussion route
+  - **Documented in data-model.md Section 8**
+
+### Phase 13.2: Core Agent Refactoring
+
+- [X] T104 [REFACTOR] Create DiscussionAgent wrapper class in src/agents/discussion.py:
+  - Wrap ChatAgent from agent-framework (via DiscussionAgent class)
+  - Add perspective/role configuration via system prompt (_build_role_instructions)
+  - Implement async run() that delegates to ChatAgent with turn tracking
+  - Implement async run_stream() for streaming responses
+  - Preserve backward compatibility with AgentProtocol interface
+  - Add factory function create_discussion_agent()
+  - Export from src/agents/__init__.py
+  - Added 28 unit tests in tests/unit/test_discussion.py
+
+- [X] T105 [REFACTOR] Refactor ModeratorAgent in src/agents/moderator_agent.py to use ChatAgent:
+  - Added optional chat_agent parameter for LLM-based moderation
+  - Added is_llm_based property to check moderation mode
+  - Added select_speaker() method for intelligent speaker selection
+  - Added run() method for ChatAgent delegation
+  - Added run_stream() method for streaming responses
+  - Added DEFAULT_MODERATOR_INSTRUCTIONS constant
+  - Created create_moderator_agent() factory function
+  - Export from src/agents/__init__.py
+  - Added 29 unit tests: TestModeratorAgentChatAgentIntegration (22 tests) + TestCreateModeratorAgentFactory (7 tests)
+  - Preserved existing ConflictStrategy enum and round-robin logic as fallback
+
+- [X] T106 [REFACTOR] Update DiscussionProtocol in src/agents/discussion.py to use Magentic patterns:
+  - Updated DiscussionProtocol constructor: added use_group_chat=False and group_chat_manager=None params
+  - Added register_discussion_agent() method to register DiscussionAgent wrappers
+  - Added discussion_agents property to return list of registered DiscussionAgents
+  - Added _build_group_chat() method to lazily construct GroupChatBuilder workflow
+  - Added _round_robin_selector() method for deterministic speaker selection
+  - Added run_discussion_stream() async iterator method for streaming discussion events
+  - Event types: discussion_started, round_started, turn_started, turn_delta, turn_completed, round_completed, discussion_completed
+  - Preserved existing register_participant(), on_turn(), on_round() APIs for backward compatibility
+  - Added 20 unit tests for T106 features: TestDiscussionProtocolGroupChatMode (7), TestRoundRobinSelector (3), TestBuildGroupChat (2), TestRunDiscussionStream (8)
+  - Total tests in suite: 594 passed, 80.64% coverage maintained
+
+- [ ] T107 [REFACTOR] Update DebateProtocol and RoundRobinProtocol in src/agents/discussion.py:
+  - Inherit from refactored DiscussionProtocol
+  - Use Magentic events for turn notifications
+  - Preserve role-based prioritization logic (proponent/opponent/neutral)
+  - Update create_debate() and create_roundtable() factory functions
+
+### Phase 13.3: Streaming & Events
+
+- [ ] T108 [REFACTOR] Add streaming support with MagenticAgentDeltaEvent in src/agents/discussion.py:
+  - Implement async iterator run_discussion_stream() for live turn streaming
+  - Yield MagenticAgentDeltaEvent for token-by-token agent responses
+  - Yield MagenticAgentMessageEvent for complete turns
+  - Yield MagenticFinalResultEvent for discussion completion
+  - Support AG-UI integration for real-time discussion UI
+
+- [ ] T109 [REFACTOR] Add AG-UI endpoint for discussion streaming in src/agents/agui_server.py:
+  - Create /discussion endpoint for streaming discussion events
+  - Map Magentic events to AG-UI event format
+  - Support multiple concurrent discussion sessions
+  - Add thread_id tracking for discussion context
+
+### Phase 13.4: Tool Integration
+
+- [ ] T110 [P] [REFACTOR] Integrate HostedWebSearchTool for research discussions in src/agents/discussion.py:
+  - Add tools parameter to DiscussionAgent and DiscussionConfig
+  - Enable HostedWebSearchTool for fact-checking during debates
+  - Use @ai_function decorator pattern for custom discussion tools
+  - Track tool usage in participant statistics
+
+- [ ] T111 [P] [REFACTOR] Add tool-augmented discussion protocol in src/agents/discussion.py:
+  - Create ToolAugmentedDiscussionProtocol subclass
+  - Allow agents to invoke tools during their turns
+  - Emit tool call events via MagenticAgentDeltaEvent
+  - Add tool_calls field to participant statistics
+
+### Phase 13.5: Notebook Updates
+
+- [ ] T112 [REFACTOR] Update notebooks/06_agent_discussions.ipynb Part 1-2:
+  - Replace MockDebateAgent with ChatAgent-based DiscussionAgent
+  - Show DiscussionAgent creation with perspective parameter
+  - Demonstrate ChatAgent-based ModeratorAgent
+  - Keep mock agents as fallback for offline testing
+
+- [ ] T113 [REFACTOR] Update notebooks/06_agent_discussions.ipynb Part 3-5:
+  - Show MagenticBuilder orchestration pattern
+  - Demonstrate streaming events with MagenticAgentDeltaEvent
+  - Update DiscussionProtocol examples with new event model
+  - Show real LLM-powered discussion example
+
+- [ ] T114 [REFACTOR] Update notebooks/06_agent_discussions.ipynb Part 6-7 and Exercise:
+  - Update conflict resolution to use ChatAgent synthesis
+  - Show tool-augmented discussions with HostedWebSearchTool
+  - Update exercise to create ChatAgent-based participant
+  - Add streaming UI example if AG-UI integration complete
+
+### Phase 13.6: Test Updates
+
+- [ ] T115 [P] [REFACTOR] Update tests/unit/test_discussion.py:
+  - Test DiscussionAgent wraps ChatAgent correctly
+  - Test MagenticBuilder integration in DiscussionProtocol
+  - Test event emission (MagenticAgentMessageEvent, WorkflowEvent)
+  - Test ChatAgent-based ModeratorAgent synthesis
+  - Mock ChatAgent for deterministic unit tests
+
+- [ ] T116 [P] [REFACTOR] Update tests/integration/test_scenario_06.py:
+  - Test full discussion with ChatAgent participants (requires API)
+  - Verify Magentic event streaming works
+  - Test AG-UI integration for discussions
+  - Add skip markers for tests requiring live API
+
+### Phase 13.7: Documentation
+
+- [ ] T117 [P] [REFACTOR] Update docs/ARCHITECTURE.md for discussion refactoring:
+  - Document Magentic integration for multi-agent discussions
+  - Update module relationship diagram to show ChatAgent usage
+  - Add event flow documentation for discussion streaming
+  - Document DiscussionAgent vs ChatAgent relationship
+
+- [ ] T118 [REFACTOR] Update research.md with Magentic patterns documentation:
+  - Add section on MagenticBuilder for discussions
+  - Document Magentic event types and their usage
+  - Add code examples for discussion orchestration
+
+**Checkpoint**: Agent discussions use Microsoft Agent Framework Magentic patterns properly ✅
+
+---
+
+## Dependencies: Phase 13 Execution Order
+
+```text
+T101 (Research Magentic APIs)
+    │
+    ├──► T102 (Type mapping) ──► T103 (Event architecture)
+    │
+    ▼
+T104 (DiscussionAgent) ◄─── Foundation for all subsequent tasks
+    │
+    ▼
+T105 (ModeratorAgent) ──► T106 (DiscussionProtocol) ──► T107 (Protocols)
+                                    │
+                                    ▼
+                              T108 (Streaming) ──► T109 (AG-UI endpoint)
+                                    │
+                                    ▼
+                         ┌─────────────────────────┐
+                         │ T110, T111 (Tools) [P]  │
+                         └─────────────────────────┘
+                                    │
+                                    ▼
+                         T112 ──► T113 ──► T114 (Notebooks)
+                                    │
+                                    ▼
+                         ┌─────────────────────────┐
+                         │ T115, T116 (Tests) [P]  │
+                         └─────────────────────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────────┐
+                         │ T117, T118 (Docs) [P]   │
+                         └─────────────────────────┘
+```
+
+---
+
 ## Notes
 
 - [P] tasks = different files, no dependencies
@@ -549,7 +769,7 @@ The AgentFactory class creates proper ChatAgent instances from YAML configuratio
 - Commit after each task or logical group
 - Stop at any checkpoint to validate scenario independently
 - Estimated times: Setup 15min, Foundational 30min, each User Story 45-60min, Refactor 2-3 hours
-- Total: ~100 tasks across 12 phases
+- Total: ~118 tasks across 13 phases
 
 ---
 
@@ -568,18 +788,23 @@ The AgentFactory class creates proper ChatAgent instances from YAML configuratio
 - Phase 10 (Polish): 8/8 ✅
 - Phase 11 (Refactor): 10/27 (T068-T074 complete, T077-T078 complete, T084-T085 complete)
 
-### Remaining Tasks: 15
+### Remaining Tasks: 33
 - Phase 11 (Refactor): 17 remaining
   - AG-UI: T075-T076 (2 tasks)
   - Declarative: T079-T080 (2 tasks, superseded by Phase 12)
   - Tests: T081-T083 (3 tasks)
   - Notebooks: T086-T091 (6 tasks)
   - Documentation: T092-T094 (3 tasks)
-- Phase 12 (Declarative Framework): 6 new tasks (T095-T100)
+- Phase 12 (Declarative Framework): 6 tasks (T095-T100)
+- Phase 13 (Discussion Framework): 18 tasks (T101-T118)
 
 ### Priority Order for Remaining Work
-1. **T095-T100** (Phase 12): Complete declarative agent integration first
-2. **T075-T076**: AG-UI refactoring (can parallel with T095-T100)
-3. **T081-T083**: Update tests
-4. **T086-T091**: Update notebooks
-5. **T092-T094**: Update documentation
+1. **T101-T103** (Phase 13.1): Research Magentic APIs first - blocks all discussion refactoring
+2. **T095-T100** (Phase 12): Complete declarative agent integration (can parallel with T101-T103)
+3. **T104-T109** (Phase 13.2-13.3): Core discussion refactoring
+4. **T075-T076**: AG-UI refactoring (can parallel with T104-T109)
+5. **T110-T111** (Phase 13.4): Tool integration for discussions
+6. **T112-T114** (Phase 13.5): Update discussion notebook
+7. **T081-T083, T115-T116**: Update tests
+8. **T086-T091**: Update other notebooks
+9. **T092-T094, T117-T118**: Update documentation

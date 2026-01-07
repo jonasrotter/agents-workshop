@@ -725,3 +725,152 @@ All NEEDS CLARIFICATION items from Technical Context have been resolved:
 5. ✅ **OpenTelemetry**: Use `azure-monitor-opentelemetry` for Azure Monitor integration
 6. ✅ **Workflow Engine**: Build lightweight custom engine (~100 lines)
 7. ✅ **Declarative Config**: Use YAML with Pydantic validation
+
+---
+
+## 8. Discussion Framework Refactoring (Phase 13)
+
+### Decision
+Use `GroupChatBuilder` from Microsoft Agent Framework for multi-agent discussion orchestration.
+
+### Rationale
+- **Native agent-framework support**: GroupChatBuilder is first-party Microsoft SDK
+- **Manager pattern**: `set_manager(agent)` directly maps to ModeratorAgent concept
+- **Round-based**: `with_max_rounds(n)` supports our discussion round model
+- **HITL support**: `with_request_info()` enables human intervention points
+- **Type-safe**: GroupChatStateSnapshot provides structured round state
+
+### Alternatives Considered
+| Alternative | Reason Rejected |
+|-------------|-----------------|
+| MagenticBuilder | Better for task planning; discussions are more conversational |
+| Custom orchestration | Reinvents wheel; GroupChatBuilder handles coordination |
+| Raw ChatAgent loops | Loses structured speaker selection and state management |
+
+### Type Mappings (T102)
+
+| Current Implementation | Agent Framework Type | Notes |
+|------------------------|----------------------|-------|
+| `DiscussionTurn` | `GroupChatTurn` | speaker, content, timestamp |
+| `RoundResult` | `GroupChatStateSnapshot` | round_index, history, conversation |
+| `ModeratorAgent` | `ChatAgent` as manager | Via `GroupChatBuilder.set_manager()` |
+| `AgentProtocol` | `ChatAgent` | Already interface-compatible |
+| `DiscussionConfig` | Builder method calls | participants, max_rounds |
+
+### Key Patterns
+
+#### GroupChatBuilder for Discussions
+```python
+from agent_framework import GroupChatBuilder, GroupChatStateSnapshot, ChatAgent
+from agent_framework.azure import AzureOpenAIChatClient
+
+# Create chat client
+chat_client = AzureOpenAIChatClient()
+
+# Create discussion participants
+optimist = chat_client.create_agent(
+    name="optimist",
+    instructions="You are an optimistic perspective. Find the positive aspects."
+)
+
+pessimist = chat_client.create_agent(
+    name="pessimist",
+    instructions="You are a skeptical perspective. Identify risks and concerns."
+)
+
+# Create moderator
+moderator = chat_client.create_agent(
+    name="moderator",
+    instructions="""You coordinate discussion. Pick the next speaker based on:
+    - Balance: Ensure all perspectives are heard
+    - Relevance: Choose speakers who can best address current point
+    - Progress: Guide toward synthesis after sufficient exploration
+    Return ONLY the speaker name (optimist or pessimist) or DONE if complete."""
+)
+
+# Build discussion workflow
+discussion = (
+    GroupChatBuilder()
+    .set_manager(moderator, display_name="Moderator")
+    .participants([optimist, pessimist])
+    .with_max_rounds(10)
+    .build()
+)
+
+# Run discussion
+async for event in discussion.run_stream("Discuss: Should we adopt AI in education?"):
+    if hasattr(event, 'text'):
+        print(f"[{event.speaker}]: {event.text}")
+```
+
+#### Function-Based Speaker Selection (Deterministic)
+```python
+from agent_framework import GroupChatBuilder, GroupChatStateSnapshot
+
+def select_round_robin(state: GroupChatStateSnapshot) -> str | None:
+    """Deterministic round-robin speaker selection."""
+    if state["round_index"] >= 6:  # 3 rounds per speaker
+        return None  # End discussion
+    
+    speakers = list(state["participants"].keys())
+    return speakers[state["round_index"] % len(speakers)]
+
+# Build with function-based selection
+discussion = (
+    GroupChatBuilder()
+    .set_select_speakers_func(select_round_robin)
+    .participants([optimist, pessimist])
+    .build()
+)
+```
+
+#### Event Streaming to AG-UI
+```python
+from ag_ui.core import EventType, RunStartedEvent, TextMessageStartEvent
+
+async def stream_discussion_to_agui(discussion_workflow, topic: str):
+    """Stream GroupChatBuilder events to AG-UI format."""
+    
+    yield {"type": EventType.RUN_STARTED}
+    
+    async for event in discussion_workflow.run_stream(topic):
+        if isinstance(event, WorkflowStartedEvent):
+            continue  # Internal event
+        
+        if hasattr(event, 'speaker') and hasattr(event, 'text'):
+            # Map GroupChatTurn to AG-UI message
+            message_id = str(uuid.uuid4())
+            
+            yield {
+                "type": EventType.TEXT_MESSAGE_START,
+                "message_id": message_id,
+                "role": "assistant",
+                "name": event.speaker
+            }
+            
+            yield {
+                "type": EventType.TEXT_MESSAGE_CONTENT,
+                "message_id": message_id,
+                "delta": event.text
+            }
+            
+            yield {
+                "type": EventType.TEXT_MESSAGE_END,
+                "message_id": message_id
+            }
+    
+    yield {"type": EventType.RUN_FINISHED}
+```
+
+### Migration Path
+
+1. **T104**: Create `DiscussionAgent` wrapper around `ChatAgent`
+2. **T105**: Refactor `ModeratorAgent` to use `GroupChatBuilder.set_manager()`
+3. **T106**: Update `DiscussionProtocol` to extend `GroupChatStateSnapshot`
+4. **T107**: Align protocol types with agent-framework
+5. **T108-T109**: Wire streaming events to AG-UI endpoint
+
+### References
+- [GroupChatBuilder API](https://github.com/microsoft/agent-framework/blob/main/src/agent_framework/_workflows/_group_chat.py)
+- [MagenticBuilder API](https://github.com/microsoft/agent-framework/blob/main/src/agent_framework/_workflows/_magentic.py)
+- [WorkflowEvent Types](https://github.com/microsoft/agent-framework/blob/main/src/agent_framework/_workflows/_workflow.py)

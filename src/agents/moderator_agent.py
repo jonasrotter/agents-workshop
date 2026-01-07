@@ -3,16 +3,27 @@ Moderator agent for facilitating multi-agent discussions.
 
 Implements turn-taking, conflict resolution, and conclusion synthesis
 for structured debates between multiple agents.
+
+Supports both rule-based moderation and ChatAgent-based LLM moderation
+for intelligent speaker selection and conflict resolution.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, AsyncIterator, Callable, Optional, Protocol, TYPE_CHECKING
 from enum import Enum
 import asyncio
+import logging
+import time
 
 from opentelemetry import trace
 
+# Conditional imports for agent-framework
+if TYPE_CHECKING:
+    from agent_framework import ChatAgent
+    from agent_framework.azure import AzureOpenAIChatClient
+
 tracer = trace.get_tracer(__name__)
+logger = logging.getLogger(__name__)
 
 
 class DiscussionPhase(str, Enum):
@@ -84,8 +95,50 @@ class AgentProtocol(Protocol):
         ...
 
 
+# =============================================================================
+# Default moderator instructions for ChatAgent-based moderation
+# =============================================================================
+
+DEFAULT_MODERATOR_INSTRUCTIONS = """You are a discussion moderator responsible for:
+1. Selecting the next speaker based on the discussion context
+2. Ensuring balanced participation from all participants
+3. Identifying and addressing conflicts between participants
+4. Guiding the discussion toward productive synthesis
+
+When asked to select a speaker, analyze the conversation and choose who should speak next.
+Return ONLY the participant name, nothing else.
+
+When asked to synthesize, provide a balanced summary of all perspectives.
+
+When handling conflicts, identify the core disagreement and suggest paths forward.
+"""
+
+
 class ModeratorAgent:
-    """Agent that moderates discussions between other agents."""
+    """
+    Agent that moderates discussions between other agents.
+    
+    Supports two moderation modes:
+    1. Rule-based (default): Uses ConflictStrategy and round-robin speaker selection
+    2. ChatAgent-based: Uses an LLM to intelligently select speakers and resolve conflicts
+    
+    The ChatAgent-based mode integrates with GroupChatBuilder for multi-agent
+    orchestration via the `set_manager()` pattern.
+    
+    Example (rule-based):
+        >>> moderator = ModeratorAgent(conflict_strategy=ConflictStrategy.EXPLORE)
+        >>> moderator.register_participant(agent1)
+        >>> moderator.register_participant(agent2)
+        >>> await moderator.start_discussion("AI in Education")
+    
+    Example (ChatAgent-based):
+        >>> moderator = create_moderator_agent(
+        ...     name="smart_moderator",
+        ...     instructions="Focus on finding common ground",
+        ...     chat_client=chat_client,
+        ... )
+        >>> next_speaker = await moderator.select_speaker(discussion_state)
+    """
     
     def __init__(
         self,
@@ -93,12 +146,28 @@ class ModeratorAgent:
         conflict_strategy: ConflictStrategy = ConflictStrategy.EXPLORE,
         max_rounds: int = 5,
         synthesis_prompt: Optional[str] = None,
+        chat_agent: Optional["ChatAgent"] = None,
+        moderator_instructions: Optional[str] = None,
     ) -> None:
-        """Initialize the moderator agent."""
+        """
+        Initialize the moderator agent.
+        
+        Args:
+            name: Name for this moderator.
+            conflict_strategy: Strategy for handling participant conflicts.
+            max_rounds: Maximum discussion rounds.
+            synthesis_prompt: Custom prompt for generating discussion synthesis.
+            chat_agent: Optional ChatAgent for LLM-based moderation.
+            moderator_instructions: Custom instructions for ChatAgent moderation.
+        """
         self.name = name
         self.conflict_strategy = conflict_strategy
         self.max_rounds = max_rounds
         self.synthesis_prompt = synthesis_prompt or self._default_synthesis_prompt()
+        
+        # ChatAgent-based moderation (T105)
+        self._chat_agent = chat_agent
+        self._moderator_instructions = moderator_instructions or DEFAULT_MODERATOR_INSTRUCTIONS
         
         self._participants: dict[str, AgentProtocol] = {}
         self._turns: list[DiscussionTurn] = []
@@ -106,6 +175,139 @@ class ModeratorAgent:
         self._current_round = 0
         self._current_phase = DiscussionPhase.OPENING
         self._topic = ""
+    
+    @property
+    def chat_agent(self) -> Optional["ChatAgent"]:
+        """Get the underlying ChatAgent if using LLM-based moderation."""
+        return self._chat_agent
+    
+    @property
+    def is_llm_based(self) -> bool:
+        """Check if using LLM-based moderation."""
+        return self._chat_agent is not None
+    
+    async def select_speaker(
+        self,
+        context: Optional[str] = None,
+        exclude: Optional[list[str]] = None,
+    ) -> Optional[str]:
+        """
+        Select the next speaker for the discussion.
+        
+        If using ChatAgent-based moderation, uses the LLM to intelligently
+        select the next speaker. Otherwise, uses round-robin selection.
+        
+        Args:
+            context: Discussion context for LLM-based selection.
+            exclude: List of participant names to exclude from selection.
+            
+        Returns:
+            Name of the selected speaker, or None if no valid speaker.
+        """
+        exclude = exclude or []
+        available = [p for p in self._participants.keys() if p not in exclude]
+        
+        if not available:
+            return None
+        
+        if self._chat_agent:
+            # LLM-based speaker selection
+            prompt = self._build_speaker_selection_prompt(context, available)
+            try:
+                result = await self._chat_agent.run(prompt)
+                selected = self._parse_speaker_selection(result, available)
+                return selected
+            except Exception as e:
+                logger.warning(f"LLM speaker selection failed: {e}, using round-robin")
+        
+        # Fall back to round-robin
+        current_idx = self._current_round % len(available)
+        return available[current_idx]
+    
+    def _build_speaker_selection_prompt(
+        self,
+        context: Optional[str],
+        available: list[str],
+    ) -> str:
+        """Build prompt for LLM speaker selection."""
+        recent_turns = self._turns[-5:] if self._turns else []
+        turns_text = "\n".join(
+            f"[{t.participant}]: {t.content[:200]}..." if len(t.content) > 200 else f"[{t.participant}]: {t.content}"
+            for t in recent_turns
+        )
+        
+        return f"""Select the next speaker for this discussion.
+
+Topic: {self._topic}
+Available speakers: {', '.join(available)}
+Current round: {self._current_round}
+
+Recent discussion:
+{turns_text or 'No previous turns'}
+
+{f'Context: {context}' if context else ''}
+
+Who should speak next? Return ONLY the speaker name."""
+    
+    def _parse_speaker_selection(
+        self,
+        result: Any,
+        available: list[str],
+    ) -> Optional[str]:
+        """Parse LLM response to extract speaker name."""
+        # Extract text from result
+        if hasattr(result, 'text'):
+            text = result.text
+        elif hasattr(result, 'content'):
+            text = str(result.content)
+        else:
+            text = str(result)
+        
+        # Clean and match
+        text = text.strip().lower()
+        for speaker in available:
+            if speaker.lower() in text:
+                return speaker
+        
+        # Return first available if no match
+        return available[0] if available else None
+    
+    async def run(self, prompt: str) -> str:
+        """
+        Run the moderator with a prompt.
+        
+        If using ChatAgent-based moderation, delegates to the ChatAgent.
+        Otherwise, returns a placeholder response.
+        
+        This method allows the moderator to be used as a participant
+        in GroupChatBuilder via set_manager().
+        """
+        if self._chat_agent:
+            result = await self._chat_agent.run(prompt)
+            if hasattr(result, 'text'):
+                return result.text
+            return str(result)
+        
+        # Rule-based moderator doesn't generate text responses
+        return f"[Moderator {self.name}]: Processing discussion..."
+    
+    async def run_stream(self, prompt: str) -> AsyncIterator[str]:
+        """
+        Run the moderator with streaming output.
+        
+        Only available when using ChatAgent-based moderation.
+        """
+        if not self._chat_agent:
+            yield f"[Moderator {self.name}]: Processing..."
+            return
+        
+        async for chunk in self._chat_agent.run_stream(prompt):
+            if hasattr(chunk, 'text'):
+                yield chunk.text
+            elif hasattr(chunk, 'delta'):
+                yield str(chunk.delta)
+            else:
+                yield str(chunk)
     
     def _default_synthesis_prompt(self) -> str:
         """Default prompt for synthesizing conclusions."""
@@ -445,3 +647,84 @@ Please be constructive and cite specific points when responding to others."""
                 key_points.append(f"{turn.participant}: {first_sentence}")
         
         return key_points[:5]  # Limit to 5 key points
+
+
+# =============================================================================
+# Factory Function for ChatAgent-based Moderator (T105)
+# =============================================================================
+
+
+def create_moderator_agent(
+    name: str = "moderator",
+    conflict_strategy: ConflictStrategy = ConflictStrategy.EXPLORE,
+    max_rounds: int = 5,
+    instructions: Optional[str] = None,
+    synthesis_prompt: Optional[str] = None,
+    chat_client: Optional["AzureOpenAIChatClient"] = None,
+    model: str = "gpt-4o",
+    temperature: float = 0.3,
+) -> ModeratorAgent:
+    """
+    Factory function to create a ModeratorAgent with optional ChatAgent support.
+    
+    Creates a moderator that can use LLM-based speaker selection and
+    conflict resolution when provided with a chat_client.
+    
+    Args:
+        name: Name for this moderator.
+        conflict_strategy: Strategy for handling participant conflicts.
+        max_rounds: Maximum discussion rounds.
+        instructions: Custom instructions for LLM-based moderation.
+            Defaults to DEFAULT_MODERATOR_INSTRUCTIONS.
+        synthesis_prompt: Custom prompt for generating discussion synthesis.
+        chat_client: AzureOpenAIChatClient for LLM-based moderation.
+            If not provided, uses rule-based moderation only.
+        model: Model to use for ChatAgent (default: gpt-4o).
+        temperature: Temperature for LLM responses (default: 0.3 for consistency).
+        
+    Returns:
+        A ModeratorAgent configured for either rule-based or LLM-based moderation.
+        
+    Example (rule-based):
+        >>> moderator = create_moderator_agent(
+        ...     name="rule_mod",
+        ...     conflict_strategy=ConflictStrategy.VOTE,
+        ... )
+    
+    Example (LLM-based):
+        >>> from agent_framework.azure import AzureOpenAIChatClient
+        >>> chat_client = AzureOpenAIChatClient(...)
+        >>> moderator = create_moderator_agent(
+        ...     name="smart_mod",
+        ...     instructions="Focus on synthesis and finding common ground",
+        ...     chat_client=chat_client,
+        ... )
+    """
+    chat_agent = None
+    
+    if chat_client is not None:
+        # Create ChatAgent for LLM-based moderation
+        try:
+            from agent_framework import ChatAgent
+        except ImportError as e:
+            raise ImportError(
+                "agent-framework package required for ChatAgent-based moderation. "
+                "Install with: pip install agent-framework"
+            ) from e
+        
+        full_instructions = instructions or DEFAULT_MODERATOR_INSTRUCTIONS
+        
+        chat_agent = chat_client.create_agent(
+            name=name,
+            instructions=full_instructions,
+            temperature=temperature,
+        )
+    
+    return ModeratorAgent(
+        name=name,
+        conflict_strategy=conflict_strategy,
+        max_rounds=max_rounds,
+        synthesis_prompt=synthesis_prompt,
+        chat_agent=chat_agent,
+        moderator_instructions=instructions,
+    )

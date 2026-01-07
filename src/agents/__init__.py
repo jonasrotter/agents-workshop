@@ -89,6 +89,25 @@ from src.agents.factories import (
     get_agent_factory,
     AGENT_FACTORIES,
 )
+from src.agents.discussion import (
+    DiscussionAgent,
+    create_discussion_agent,
+    DiscussionRole,
+    DiscussionConfig,
+    DiscussionProtocol,
+    Participant,
+    RoundResult,
+)
+from src.agents.moderator_agent import (
+    ModeratorAgent,
+    DiscussionPhase,
+    DiscussionTurn,
+    DiscussionSummary,
+    ConflictStrategy,
+    AgentProtocol,
+    create_moderator_agent,
+    DEFAULT_MODERATOR_INSTRUCTIONS,
+)
 
 __all__ = [
     "BaseAgent",
@@ -129,4 +148,21 @@ __all__ = [
     "create_custom_agent",
     "get_agent_factory",
     "AGENT_FACTORIES",
+    # Discussion framework
+    "DiscussionAgent",
+    "create_discussion_agent",
+    "DiscussionRole",
+    "DiscussionConfig",
+    "DiscussionProtocol",
+    "Participant",
+    "RoundResult",
+    # Moderator
+    "ModeratorAgent",
+    "DiscussionPhase",
+    "DiscussionTurn",
+    "DiscussionSummary",
+    "ConflictStrategy",
+    "AgentProtocol",
+    "create_moderator_agent",
+    "DEFAULT_MODERATOR_INSTRUCTIONS",
 ]

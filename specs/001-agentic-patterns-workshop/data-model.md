@@ -562,3 +562,232 @@ ATTR_ERROR_MESSAGE = "error.message"
 1. **JSON Schema validity**: input_schema must be valid JSON Schema
 2. **Required fields**: name, description, input_schema are required
 3. **Name format**: Must match `^[a-z][a-z0-9_]*$` pattern
+
+---
+
+## 8. Event Streaming Architecture (T103)
+
+### Overview
+
+This section documents how events flow from GroupChatBuilder discussions through to AG-UI clients for real-time UI updates.
+
+### Event Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          GroupChatBuilder Workflow                          │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐  │
+│  │  Moderator   │◄─►│  Optimist    │◄─►│  Pessimist   │◄─►│   Analyst    │  │
+│  │  (manager)   │   │  (speaker)   │   │  (speaker)   │   │  (speaker)   │  │
+│  └──────┬───────┘   └──────────────┘   └──────────────┘   └──────────────┘  │
+│         │                                                                    │
+│         ▼ run_stream()                                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                    WorkflowEvent Stream                              │    │
+│  │  WorkflowStartedEvent → GroupChatTurn* → WorkflowFinishedEvent      │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        Event Adapter Layer                                   │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  stream_discussion_to_agui(workflow, topic)                         │    │
+│  │                                                                      │    │
+│  │  1. WorkflowStartedEvent  →  RUN_STARTED                            │    │
+│  │  2. GroupChatTurn         →  TEXT_MESSAGE_START/CONTENT/END         │    │
+│  │  3. WorkflowFinishedEvent →  RUN_FINISHED                           │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         AG-UI Protocol Layer                                 │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  SSE/JSON Stream over HTTP POST /discussion                         │    │
+│  │                                                                      │    │
+│  │  event: RUN_STARTED        {"thread_id": "...", "run_id": "..."}   │    │
+│  │  event: TEXT_MESSAGE_START {"message_id": "...", "name": "optimist"}│    │
+│  │  event: TEXT_MESSAGE_CONTENT {"delta": "I think this is great..."}  │    │
+│  │  event: TEXT_MESSAGE_END   {"message_id": "..."}                    │    │
+│  │  event: TEXT_MESSAGE_START {"message_id": "...", "name": "pessimist"}│   │
+│  │  ...                                                                 │    │
+│  │  event: RUN_FINISHED       {"thread_id": "...", "run_id": "..."}   │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            UI Client Layer                                   │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  CopilotKit / Custom React / Jupyter Widget                         │    │
+│  │                                                                      │    │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │    │
+│  │  │ [Optimist]: I think this is great because...                 │  │    │
+│  │  │ [Pessimist]: But we should consider the risks...             │  │    │
+│  │  │ [Analyst]: Looking at the data, we see...                    │  │    │
+│  │  │ █ typing...                                                   │  │    │
+│  │  └───────────────────────────────────────────────────────────────┘  │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Event Type Mapping
+
+| GroupChatBuilder Event | AG-UI Event Type | Description |
+|------------------------|------------------|-------------|
+| `WorkflowStartedEvent` | `RUN_STARTED` | Discussion begins |
+| `GroupChatTurn.start` | `TEXT_MESSAGE_START` | Speaker turn begins |
+| `GroupChatTurn.content` | `TEXT_MESSAGE_CONTENT` | Token/chunk streamed |
+| `GroupChatTurn.end` | `TEXT_MESSAGE_END` | Speaker turn complete |
+| `WorkflowFinishedEvent` | `RUN_FINISHED` | Discussion complete |
+| `WorkflowFailedEvent` | `RUN_ERROR` | Discussion failed |
+
+### Event Adapter Implementation
+
+```python
+from typing import AsyncIterator
+from ag_ui.core import EventType
+from agent_framework import GroupChatBuilder, WorkflowEvent
+from agent_framework._workflows._group_chat import GroupChatTurn
+import uuid
+
+async def stream_discussion_to_agui(
+    discussion: GroupChatBuilder,
+    topic: str,
+    thread_id: str | None = None,
+    run_id: str | None = None,
+) -> AsyncIterator[dict]:
+    """
+    Adapt GroupChatBuilder events to AG-UI event stream.
+    
+    Args:
+        discussion: Built GroupChatBuilder workflow
+        topic: Discussion topic/question
+        thread_id: Optional thread ID for conversation context
+        run_id: Optional run ID for this specific execution
+    
+    Yields:
+        AG-UI compatible event dictionaries
+    """
+    thread_id = thread_id or str(uuid.uuid4())
+    run_id = run_id or str(uuid.uuid4())
+    
+    # Signal run started
+    yield {
+        "type": EventType.RUN_STARTED,
+        "thread_id": thread_id,
+        "run_id": run_id,
+    }
+    
+    try:
+        async for event in discussion.run_stream(topic):
+            # Handle different event types from GroupChatBuilder
+            if hasattr(event, 'speaker') and hasattr(event, 'content'):
+                # GroupChatTurn event - a speaker contribution
+                message_id = str(uuid.uuid4())
+                
+                # Message start with speaker name
+                yield {
+                    "type": EventType.TEXT_MESSAGE_START,
+                    "message_id": message_id,
+                    "role": "assistant",
+                    "name": event.speaker,  # e.g., "optimist", "pessimist"
+                }
+                
+                # Stream content (if streaming is available)
+                if hasattr(event, 'content_stream'):
+                    async for chunk in event.content_stream:
+                        yield {
+                            "type": EventType.TEXT_MESSAGE_CONTENT,
+                            "message_id": message_id,
+                            "delta": chunk,
+                        }
+                else:
+                    # Non-streaming: emit full content as single delta
+                    yield {
+                        "type": EventType.TEXT_MESSAGE_CONTENT,
+                        "message_id": message_id,
+                        "delta": event.content,
+                    }
+                
+                # Message end
+                yield {
+                    "type": EventType.TEXT_MESSAGE_END,
+                    "message_id": message_id,
+                }
+        
+        # Signal run finished
+        yield {
+            "type": EventType.RUN_FINISHED,
+            "thread_id": thread_id,
+            "run_id": run_id,
+        }
+        
+    except Exception as e:
+        # Signal run error
+        yield {
+            "type": EventType.RUN_ERROR,
+            "thread_id": thread_id,
+            "run_id": run_id,
+            "error": str(e),
+        }
+```
+
+### FastAPI Endpoint Integration
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
+from ag_ui.encoder import EventEncoder
+
+app = FastAPI()
+
+@app.post("/discussion")
+async def discussion_endpoint(
+    topic: str,
+    participants: list[str] = ["optimist", "pessimist"],
+    max_rounds: int = 10,
+    request: Request = None,
+):
+    """Stream a moderated discussion via AG-UI protocol."""
+    
+    # Build discussion workflow
+    discussion = await build_discussion(participants, max_rounds)
+    
+    # Get accept header for encoding
+    accept = request.headers.get("accept", "text/event-stream")
+    encoder = EventEncoder(accept=accept)
+    
+    async def event_generator():
+        async for event in stream_discussion_to_agui(discussion, topic):
+            yield encoder.encode(event)
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type=accept,
+    )
+```
+
+### Real-Time UI Updates
+
+The event stream enables:
+
+1. **Live speaker attribution**: UI shows which agent is currently speaking
+2. **Token streaming**: Characters appear as they're generated
+3. **Round progress**: UI can track discussion round count
+4. **Interruption points**: `with_request_info()` pauses emit `INPUT_REQUIRED` events for HITL
+
+### Discussion Metadata Events
+
+For richer UIs, we can emit custom discussion metadata:
+
+```python
+# Custom metadata event (extension)
+yield {
+    "type": "discussion.round_start",
+    "round_index": state["round_index"],
+    "speaker": selected_speaker,
+    "participants": list(state["participants"].keys()),
+}
+```

@@ -4,13 +4,17 @@ Discussion protocol for multi-agent debates.
 Provides structured protocols for managing multi-agent
 discussions with participant registration, round management,
 and cross-reference detection.
+
+Also provides DiscussionAgent wrapper class that wraps ChatAgent
+from Microsoft Agent Framework for structured discussion participation.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, AsyncIterator, Callable, Optional, Protocol, TYPE_CHECKING
 from enum import Enum
 import asyncio
 import time
+import logging
 
 from opentelemetry import trace
 
@@ -23,7 +27,302 @@ from src.agents.moderator_agent import (
     AgentProtocol,
 )
 
+# Conditional imports for agent-framework
+if TYPE_CHECKING:
+    from agent_framework import ChatAgent, GroupChatBuilder
+    from agent_framework.azure import AzureOpenAIChatClient
+
 tracer = trace.get_tracer(__name__)
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# DiscussionAgent Wrapper (T104)
+# =============================================================================
+
+
+class DiscussionAgent:
+    """
+    Wrapper around ChatAgent from Microsoft Agent Framework for discussions.
+    
+    Provides perspective/role configuration via system prompt while preserving
+    backward compatibility with the AgentProtocol interface.
+    
+    This class enables integration with GroupChatBuilder for multi-agent
+    discussions while maintaining the existing discussion framework API.
+    
+    Example:
+        >>> agent = create_discussion_agent(
+        ...     name="optimist",
+        ...     role=DiscussionRole.PROPONENT,
+        ...     perspective="You always find the positive aspects and opportunities.",
+        ...     chat_client=chat_client,
+        ... )
+        >>> response = await agent.run("What do you think about AI in education?")
+    """
+    
+    def __init__(
+        self,
+        name: str,
+        chat_agent: "ChatAgent",
+        role: Optional["DiscussionRole"] = None,
+        perspective: str = "",
+        temperature: float = 0.7,
+    ) -> None:
+        """
+        Initialize a discussion agent.
+        
+        Args:
+            name: Unique name for this agent in the discussion.
+            chat_agent: Underlying ChatAgent from agent-framework.
+            role: Optional discussion role (proponent, opponent, etc.).
+            perspective: Additional perspective prompt to shape responses.
+            temperature: Temperature setting for responses.
+        """
+        self._name = name
+        self._chat_agent = chat_agent
+        self._role = role
+        self._perspective = perspective
+        self._temperature = temperature
+        self._turn_count = 0
+    
+    @property
+    def name(self) -> str:
+        """Agent name for discussion identification."""
+        return self._name
+    
+    @property
+    def role(self) -> Optional["DiscussionRole"]:
+        """Discussion role (proponent, opponent, neutral, etc.)."""
+        return self._role
+    
+    @property
+    def perspective(self) -> str:
+        """Agent's perspective prompt."""
+        return self._perspective
+    
+    @property
+    def chat_agent(self) -> "ChatAgent":
+        """Underlying ChatAgent from agent-framework."""
+        return self._chat_agent
+    
+    @property
+    def turn_count(self) -> int:
+        """Number of turns this agent has taken in current discussion."""
+        return self._turn_count
+    
+    def reset_turn_count(self) -> None:
+        """Reset turn count for a new discussion or round."""
+        self._turn_count = 0
+    
+    @tracer.start_as_current_span("discussion_agent.run")
+    async def run(self, prompt: str) -> str:
+        """
+        Run the agent with a prompt and return the response.
+        
+        This method implements the AgentProtocol interface for backward
+        compatibility with existing discussion framework code.
+        
+        Args:
+            prompt: The input prompt or question to respond to.
+            
+        Returns:
+            The agent's response as a string.
+        """
+        span = trace.get_current_span()
+        span.set_attribute("agent.name", self._name)
+        span.set_attribute("agent.role", self._role.value if self._role else "none")
+        span.set_attribute("agent.turn", self._turn_count)
+        
+        self._turn_count += 1
+        
+        # Run the underlying ChatAgent
+        result = await self._chat_agent.run(prompt)
+        
+        # Extract text from result
+        if hasattr(result, 'text'):
+            return result.text
+        elif hasattr(result, 'content'):
+            return str(result.content)
+        else:
+            return str(result)
+    
+    async def run_stream(self, prompt: str) -> AsyncIterator[str]:
+        """
+        Run the agent with streaming output.
+        
+        Yields text chunks as they are generated by the underlying
+        ChatAgent, enabling real-time display in UIs.
+        
+        Args:
+            prompt: The input prompt or question to respond to.
+            
+        Yields:
+            Text chunks as they are generated.
+        """
+        self._turn_count += 1
+        
+        async for chunk in self._chat_agent.run_stream(prompt):
+            if hasattr(chunk, 'text'):
+                yield chunk.text
+            elif hasattr(chunk, 'content'):
+                yield str(chunk.content)
+            elif hasattr(chunk, 'delta'):
+                yield str(chunk.delta)
+            else:
+                yield str(chunk)
+    
+    def __repr__(self) -> str:
+        """String representation."""
+        role_str = f", role={self._role.value}" if self._role else ""
+        return f"DiscussionAgent(name={self._name!r}{role_str})"
+
+
+def create_discussion_agent(
+    name: str,
+    role: Optional["DiscussionRole"] = None,
+    perspective: str = "",
+    instructions: Optional[str] = None,
+    chat_client: Optional["AzureOpenAIChatClient"] = None,
+    model: str = "gpt-4o",
+    temperature: float = 0.7,
+    max_tokens: int = 1000,
+) -> DiscussionAgent:
+    """
+    Factory function to create a DiscussionAgent for multi-agent discussions.
+    
+    Creates a ChatAgent with appropriate system instructions based on the
+    role and perspective, then wraps it in a DiscussionAgent for use with
+    the discussion framework.
+    
+    Args:
+        name: Unique name for this agent in the discussion.
+        role: Discussion role (proponent, opponent, neutral, expert, devil_advocate).
+        perspective: Additional perspective prompt to shape responses.
+        instructions: Optional custom instructions. If not provided, generates
+            role-based instructions automatically.
+        chat_client: AzureOpenAIChatClient to use. If not provided, creates one
+            from environment configuration.
+        model: Model to use (default: gpt-4o).
+        temperature: Temperature for responses (default: 0.7).
+        max_tokens: Maximum tokens in response (default: 1000).
+        
+    Returns:
+        A DiscussionAgent ready for use in discussions.
+        
+    Example:
+        >>> from src.agents.discussion import create_discussion_agent, DiscussionRole
+        >>> 
+        >>> optimist = create_discussion_agent(
+        ...     name="optimist",
+        ...     role=DiscussionRole.PROPONENT,
+        ...     perspective="Focus on benefits, opportunities, and positive outcomes.",
+        ... )
+        >>> 
+        >>> pessimist = create_discussion_agent(
+        ...     name="pessimist",
+        ...     role=DiscussionRole.OPPONENT,
+        ...     perspective="Identify risks, challenges, and potential problems.",
+        ... )
+    """
+    # Import here to avoid circular imports and make optional dependency clear
+    try:
+        from agent_framework import ChatAgent
+        from agent_framework.azure import AzureOpenAIChatClient
+    except ImportError as e:
+        raise ImportError(
+            "agent-framework package required for DiscussionAgent. "
+            "Install with: pip install agent-framework"
+        ) from e
+    
+    # Create chat client if not provided
+    if chat_client is None:
+        from src.common.config import get_settings
+        settings = get_settings()
+        
+        # Create AzureOpenAIChatClient from settings
+        chat_client = AzureOpenAIChatClient(
+            azure_endpoint=settings.azure_openai_endpoint,
+            api_version=settings.azure_openai_api_version,
+        )
+    
+    # Build system instructions based on role
+    if instructions is None:
+        instructions = _build_role_instructions(name, role, perspective)
+    
+    # Create the underlying ChatAgent
+    chat_agent = chat_client.create_agent(
+        name=name,
+        instructions=instructions,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    
+    return DiscussionAgent(
+        name=name,
+        chat_agent=chat_agent,
+        role=role,
+        perspective=perspective,
+        temperature=temperature,
+    )
+
+
+def _build_role_instructions(
+    name: str,
+    role: Optional["DiscussionRole"],
+    perspective: str,
+) -> str:
+    """Build system instructions based on discussion role."""
+    
+    role_prompts = {
+        DiscussionRole.PROPONENT: (
+            "You are an advocate arguing IN FAVOR of the topic. "
+            "Present compelling arguments, evidence, and benefits. "
+            "Acknowledge counterpoints but emphasize positive aspects."
+        ),
+        DiscussionRole.OPPONENT: (
+            "You are a critic arguing AGAINST the topic. "
+            "Identify risks, challenges, and potential negative consequences. "
+            "Be skeptical and present counterarguments to claims made by others."
+        ),
+        DiscussionRole.NEUTRAL: (
+            "You are a balanced participant providing neutral analysis. "
+            "Present multiple perspectives fairly without taking sides. "
+            "Focus on facts and objective assessment."
+        ),
+        DiscussionRole.EXPERT: (
+            "You are a subject matter expert providing specialized knowledge. "
+            "Share technical insights, research findings, and domain expertise. "
+            "Clarify complex concepts and correct misconceptions."
+        ),
+        DiscussionRole.DEVIL_ADVOCATE: (
+            "You are a devil's advocate challenging all positions. "
+            "Question assumptions, probe weaknesses in arguments, "
+            "and push participants to strengthen their reasoning."
+        ),
+    }
+    
+    base_instruction = f"You are {name}, a participant in a multi-agent discussion."
+    
+    if role:
+        role_instruction = role_prompts.get(role, "")
+    else:
+        role_instruction = "Contribute thoughtfully to the discussion."
+    
+    # Combine instructions
+    parts = [base_instruction, role_instruction]
+    if perspective:
+        parts.append(f"Your perspective: {perspective}")
+    
+    parts.append(
+        "\nGuidelines:\n"
+        "- Keep responses concise and focused (2-3 paragraphs max)\n"
+        "- Reference points made by other participants when relevant\n"
+        "- Build on the discussion context, don't repeat what's been said\n"
+        "- Be respectful but assertive in your position"
+    )
+    
+    return "\n\n".join(parts)
 
 
 class DiscussionRole(str, Enum):
@@ -78,15 +377,52 @@ class RoundResult:
 
 
 class DiscussionProtocol:
-    """Protocol for managing structured discussions."""
+    """
+    Protocol for managing structured discussions.
+    
+    Supports two modes:
+    1. Legacy mode (default): Uses ModeratorAgent for round management
+    2. GroupChatBuilder mode: Uses agent-framework's GroupChatBuilder for orchestration
+    
+    The GroupChatBuilder mode provides:
+    - Native integration with Microsoft Agent Framework
+    - Automatic speaker selection via set_manager() or custom function
+    - WorkflowEvent emission for round start/completion
+    - Streaming support via run_discussion_stream()
+    
+    Example (legacy mode):
+        >>> protocol = DiscussionProtocol(config)
+        >>> protocol.register_participant(agent, DiscussionRole.PROPONENT)
+        >>> summary = await protocol.run_discussion()
+    
+    Example (GroupChatBuilder mode):
+        >>> protocol = DiscussionProtocol(config, use_group_chat=True)
+        >>> protocol.register_discussion_agent(discussion_agent)
+        >>> async for event in protocol.run_discussion_stream():
+        ...     print(event)
+    """
     
     def __init__(
         self,
         config: DiscussionConfig,
         moderator: Optional[ModeratorAgent] = None,
+        use_group_chat: bool = False,
+        group_chat_manager: Optional["ChatAgent"] = None,
     ) -> None:
-        """Initialize the discussion protocol."""
+        """
+        Initialize the discussion protocol.
+        
+        Args:
+            config: Configuration for the discussion.
+            moderator: Optional moderator agent for legacy mode.
+            use_group_chat: If True, use GroupChatBuilder for orchestration.
+            group_chat_manager: Optional ChatAgent to use as manager in GroupChatBuilder.
+                If not provided with use_group_chat=True, uses the moderator's chat_agent.
+        """
         self.config = config
+        self.use_group_chat = use_group_chat
+        self._group_chat_manager = group_chat_manager
+        
         # Calculate total rounds needed: main rounds + rebuttal rounds
         total_rounds = config.max_rounds + (
             config.rebuttal_rounds if config.allow_rebuttals else 0
@@ -97,10 +433,12 @@ class DiscussionProtocol:
         )
         
         self._participants: dict[str, Participant] = {}
+        self._discussion_agents: list["DiscussionAgent"] = []  # For GroupChatBuilder mode
         self._round_results: list[RoundResult] = []
         self._is_active = False
         self._on_turn_callbacks: list[Callable[[DiscussionTurn], None]] = []
         self._on_round_callbacks: list[Callable[[RoundResult], None]] = []
+        self._group_chat: Optional["GroupChatBuilder"] = None
     
     def register_participant(
         self,
@@ -117,10 +455,41 @@ class DiscussionProtocol:
         self._participants[agent.name] = participant
         self.moderator.register_participant(agent, role.value)
     
+    def register_discussion_agent(
+        self,
+        discussion_agent: "DiscussionAgent",
+        priority: int = 0,
+    ) -> None:
+        """
+        Register a DiscussionAgent for GroupChatBuilder mode.
+        
+        In GroupChatBuilder mode, this adds the agent to the participant list
+        for orchestration via GroupChatBuilder.
+        
+        Args:
+            discussion_agent: A DiscussionAgent wrapping a ChatAgent.
+            priority: Speaking priority (higher speaks earlier in round-robin).
+        """
+        self._discussion_agents.append(discussion_agent)
+        
+        # Also register in legacy mode for backward compatibility
+        role = discussion_agent.role or DiscussionRole.NEUTRAL
+        participant = Participant(
+            agent=discussion_agent,
+            role=role,
+            priority=priority,
+        )
+        self._participants[discussion_agent.name] = participant
+        self.moderator.register_participant(discussion_agent, role.value if role else None)
+    
     def unregister_participant(self, name: str) -> None:
         """Remove a participant from the discussion."""
         self._participants.pop(name, None)
         self.moderator.unregister_participant(name)
+        # Remove from discussion agents list too
+        self._discussion_agents = [
+            a for a in self._discussion_agents if a.name != name
+        ]
     
     @property
     def participants(self) -> list[Participant]:
@@ -131,6 +500,11 @@ class DiscussionProtocol:
     def participant_names(self) -> list[str]:
         """Get all participant names."""
         return list(self._participants.keys())
+    
+    @property
+    def discussion_agents(self) -> list["DiscussionAgent"]:
+        """Get all registered DiscussionAgents for GroupChatBuilder mode."""
+        return self._discussion_agents.copy()
     
     def on_turn(
         self,
@@ -145,6 +519,93 @@ class DiscussionProtocol:
     ) -> None:
         """Register callback for round completion events."""
         self._on_round_callbacks.append(callback)
+    
+    def _build_group_chat(self) -> "GroupChatBuilder":
+        """
+        Build a GroupChatBuilder workflow from registered participants.
+        
+        Returns:
+            A configured GroupChatBuilder ready for execution.
+            
+        Raises:
+            ImportError: If agent-framework is not installed.
+            ValueError: If no discussion agents are registered.
+        """
+        try:
+            from agent_framework import GroupChatBuilder
+        except ImportError as e:
+            raise ImportError(
+                "agent-framework package required for GroupChatBuilder mode. "
+                "Install with: pip install agent-framework"
+            ) from e
+        
+        if not self._discussion_agents:
+            raise ValueError(
+                "No DiscussionAgents registered. Use register_discussion_agent() "
+                "in GroupChatBuilder mode."
+            )
+        
+        # Get ChatAgents from DiscussionAgent wrappers
+        chat_agents = [
+            agent.chat_agent for agent in self._discussion_agents
+            if agent.chat_agent is not None
+        ]
+        
+        if not chat_agents:
+            raise ValueError(
+                "No ChatAgents available from DiscussionAgents. "
+                "Ensure DiscussionAgents have valid chat_agent instances."
+            )
+        
+        # Build the GroupChatBuilder
+        builder = GroupChatBuilder()
+        
+        # Set manager if available
+        manager = self._group_chat_manager
+        if manager is None and self.moderator.is_llm_based:
+            manager = self.moderator.chat_agent
+        
+        if manager is not None:
+            builder = builder.set_manager(manager)
+        else:
+            # Use round-robin selection function as fallback
+            builder = builder.set_select_speakers_func(self._round_robin_selector)
+        
+        # Add participants
+        builder = builder.participants(chat_agents)
+        
+        # Configure rounds
+        builder = builder.with_max_rounds(self.config.max_rounds * 2)  # Turns per agent
+        
+        return builder.build()
+    
+    def _round_robin_selector(self, state: dict) -> Optional[str]:
+        """
+        Round-robin speaker selection function for GroupChatBuilder.
+        
+        Args:
+            state: GroupChatStateSnapshot dict with round_index and participants.
+            
+        Returns:
+            Name of next speaker, or None to end discussion.
+        """
+        round_index = state.get("round_index", 0)
+        participants = state.get("participants", {})
+        
+        if not participants:
+            return None
+        
+        # Calculate total turns per agent based on config
+        turns_per_agent = self.config.max_turns_per_round
+        total_turns = len(participants) * self.config.max_rounds * turns_per_agent
+        
+        if round_index >= total_turns:
+            return None
+        
+        # Sort by priority if available
+        ordered_names = list(participants.keys())
+        
+        return ordered_names[round_index % len(ordered_names)]
     
     @tracer.start_as_current_span("protocol.run_discussion")
     async def run_discussion(self) -> DiscussionSummary:
@@ -190,6 +651,222 @@ class DiscussionProtocol:
             self._is_active = False
         
         return summary
+    
+    @tracer.start_as_current_span("protocol.run_discussion_stream")
+    async def run_discussion_stream(
+        self,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """
+        Run discussion with streaming output using GroupChatBuilder.
+        
+        This method is only available when use_group_chat=True and
+        DiscussionAgents are registered.
+        
+        Yields:
+            Dict events in the following format:
+            - {"type": "discussion_started", "topic": str}
+            - {"type": "round_started", "round": int}
+            - {"type": "turn_started", "speaker": str, "role": str}
+            - {"type": "turn_delta", "speaker": str, "delta": str}
+            - {"type": "turn_completed", "speaker": str, "content": str}
+            - {"type": "round_completed", "round": int, "turns": int}
+            - {"type": "discussion_completed", "summary": str}
+            
+        Raises:
+            ImportError: If agent-framework is not installed.
+            ValueError: If no discussion agents are registered.
+            RuntimeError: If called without use_group_chat=True.
+            
+        Example:
+            >>> protocol = DiscussionProtocol(config, use_group_chat=True)
+            >>> protocol.register_discussion_agent(agent1)
+            >>> protocol.register_discussion_agent(agent2)
+            >>> async for event in protocol.run_discussion_stream():
+            ...     if event["type"] == "turn_delta":
+            ...         print(event["delta"], end="")
+        """
+        if not self.use_group_chat:
+            raise RuntimeError(
+                "run_discussion_stream() requires use_group_chat=True"
+            )
+        
+        span = trace.get_current_span()
+        span.set_attribute("discussion.topic", self.config.topic)
+        span.set_attribute("discussion.mode", "group_chat")
+        span.set_attribute("discussion.participants", len(self._discussion_agents))
+        
+        self._is_active = True
+        self._round_results = []
+        
+        yield {
+            "type": "discussion_started",
+            "topic": self.config.topic,
+            "participants": [a.name for a in self._discussion_agents],
+        }
+        
+        try:
+            # Build GroupChatBuilder workflow
+            group_chat = self._build_group_chat()
+            
+            current_round = 1
+            turns_in_round = 0
+            current_speaker: Optional[str] = None
+            current_content = ""
+            round_turns: list[DiscussionTurn] = []
+            
+            yield {"type": "round_started", "round": current_round}
+            
+            # Stream from GroupChatBuilder
+            async for event in group_chat.run_stream(self.config.topic):
+                # Handle different event types from GroupChatBuilder
+                event_type = getattr(event, "type", None) or type(event).__name__
+                
+                if hasattr(event, "speaker"):
+                    speaker = event.speaker
+                    
+                    # Check if speaker changed
+                    if speaker != current_speaker:
+                        # Complete previous turn
+                        if current_speaker and current_content:
+                            turn = DiscussionTurn(
+                                participant=current_speaker,
+                                content=current_content,
+                                phase=DiscussionPhase.DISCUSSION,
+                                round_number=current_round,
+                                timestamp=time.time(),
+                            )
+                            round_turns.append(turn)
+                            
+                            # Notify callbacks
+                            for callback in self._on_turn_callbacks:
+                                callback(turn)
+                            
+                            yield {
+                                "type": "turn_completed",
+                                "speaker": current_speaker,
+                                "content": current_content,
+                            }
+                            
+                            turns_in_round += 1
+                            
+                            # Check for round completion
+                            if turns_in_round >= len(self._discussion_agents):
+                                result = RoundResult(
+                                    round_number=current_round,
+                                    turns=round_turns.copy(),
+                                    conflicts_detected=0,
+                                    duration_seconds=0.0,
+                                    participation_rate=1.0,
+                                )
+                                self._round_results.append(result)
+                                
+                                for callback in self._on_round_callbacks:
+                                    callback(result)
+                                
+                                yield {
+                                    "type": "round_completed",
+                                    "round": current_round,
+                                    "turns": turns_in_round,
+                                }
+                                
+                                current_round += 1
+                                turns_in_round = 0
+                                round_turns = []
+                                
+                                if current_round <= self.config.max_rounds:
+                                    yield {"type": "round_started", "round": current_round}
+                        
+                        # Start new turn
+                        current_speaker = speaker
+                        current_content = ""
+                        
+                        # Find role for speaker
+                        role = "neutral"
+                        for agent in self._discussion_agents:
+                            if agent.name == speaker and agent.role:
+                                role = agent.role.value
+                                break
+                        
+                        yield {
+                            "type": "turn_started",
+                            "speaker": speaker,
+                            "role": role,
+                        }
+                
+                # Handle text content
+                if hasattr(event, "text"):
+                    current_content += event.text
+                    yield {
+                        "type": "turn_delta",
+                        "speaker": current_speaker,
+                        "delta": event.text,
+                    }
+                elif hasattr(event, "delta"):
+                    current_content += str(event.delta)
+                    yield {
+                        "type": "turn_delta",
+                        "speaker": current_speaker,
+                        "delta": str(event.delta),
+                    }
+            
+            # Complete final turn
+            if current_speaker and current_content:
+                turn = DiscussionTurn(
+                    participant=current_speaker,
+                    content=current_content,
+                    phase=DiscussionPhase.DISCUSSION,
+                    round_number=current_round,
+                    timestamp=time.time(),
+                )
+                round_turns.append(turn)
+                
+                for callback in self._on_turn_callbacks:
+                    callback(turn)
+                
+                yield {
+                    "type": "turn_completed",
+                    "speaker": current_speaker,
+                    "content": current_content,
+                }
+            
+            # Complete final round
+            if round_turns:
+                result = RoundResult(
+                    round_number=current_round,
+                    turns=round_turns,
+                    conflicts_detected=0,
+                    duration_seconds=0.0,
+                    participation_rate=len(round_turns) / len(self._discussion_agents),
+                )
+                self._round_results.append(result)
+                
+                for callback in self._on_round_callbacks:
+                    callback(result)
+                
+                yield {
+                    "type": "round_completed",
+                    "round": current_round,
+                    "turns": len(round_turns),
+                }
+            
+            # Generate summary from moderator
+            summary_text = "Discussion completed."
+            if self.moderator.is_llm_based:
+                summary_text = await self.moderator.run(
+                    f"Summarize the discussion on '{self.config.topic}' with "
+                    f"{len(self._round_results)} rounds and "
+                    f"{len(self._discussion_agents)} participants."
+                )
+            
+            yield {
+                "type": "discussion_completed",
+                "summary": summary_text,
+                "total_rounds": len(self._round_results),
+                "total_turns": sum(len(r.turns) for r in self._round_results),
+            }
+            
+        finally:
+            self._is_active = False
     
     async def _run_round(self, round_number: int) -> RoundResult:
         """Run a single discussion round."""
