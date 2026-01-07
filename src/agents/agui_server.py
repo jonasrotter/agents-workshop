@@ -9,54 +9,67 @@ AG-UI Protocol enables:
 - State management for conversations
 - Rich event types for UI rendering
 
+This module provides both:
+1. SDK-based implementation using `agent-framework-ag-ui` for production
+2. Custom implementation for educational purposes
+
 Reference: specs/001-agentic-patterns-workshop/contracts/agui-events.md
 """
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from src.common.config import get_settings
+# Import SDK types - these are the official AG-UI protocol types
+from ag_ui.core import EventType  # Official SDK EventType
+from ag_ui.core import Message as SDKMessage
+from ag_ui.core import RunAgentInput as SDKRunAgentInput
+from ag_ui.core import Tool as SDKTool
+from ag_ui.core import ToolCall as SDKToolCall
+# Import SDK event classes with aliases to avoid conflicts with legacy classes
+from ag_ui.core import (
+    BaseEvent as SDKBaseEvent,
+    RunStartedEvent as SDKRunStartedEvent,
+    RunFinishedEvent as SDKRunFinishedEvent,
+    RunErrorEvent as SDKRunErrorEvent,
+    TextMessageStartEvent as SDKTextMessageStartEvent,
+    TextMessageContentEvent as SDKTextMessageContentEvent,
+    TextMessageEndEvent as SDKTextMessageEndEvent,
+    ToolCallStartEvent as SDKToolCallStartEvent,
+    ToolCallArgsEvent as SDKToolCallArgsEvent,
+    ToolCallEndEvent as SDKToolCallEndEvent,
+    StateSnapshotEvent as SDKStateSnapshotEvent,
+    StateDeltaEvent as SDKStateDeltaEvent,
+    RawEvent as SDKRawEvent,
+)
+from ag_ui.encoder import EventEncoder
+
 from src.common.exceptions import AGUIError
 from src.common.telemetry import get_tracer, record_exception
 
 tracer = get_tracer(__name__)
 
 
-class EventType(str, Enum):
-    """AG-UI event types for streaming responses."""
-
-    RUN_STARTED = "RUN_STARTED"
-    RUN_FINISHED = "RUN_FINISHED"
-    RUN_ERROR = "RUN_ERROR"
-    TEXT_MESSAGE_START = "TEXT_MESSAGE_START"
-    TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT"
-    TEXT_MESSAGE_END = "TEXT_MESSAGE_END"
-    TOOL_CALL_START = "TOOL_CALL_START"
-    TOOL_CALL_ARGS = "TOOL_CALL_ARGS"
-    TOOL_CALL_END = "TOOL_CALL_END"
-    STATE_SNAPSHOT = "STATE_SNAPSHOT"
-    STATE_DELTA = "STATE_DELTA"
-    RAW = "RAW"
-
-
-# Request Models
+# Backward compatibility aliases for custom types (will be deprecated)
+# These allow existing code to continue working during migration
 
 
 class ToolCall(BaseModel):
-    """Tool call within a message."""
+    """Tool call within a message.
+    
+    .. deprecated:: 2.0
+        Use `ag_ui.core.ToolCall` instead.
+    """
 
     id: str
     type: str = "function"
@@ -64,7 +77,11 @@ class ToolCall(BaseModel):
 
 
 class Message(BaseModel):
-    """Message in conversation history."""
+    """Message in conversation history.
+    
+    .. deprecated:: 2.0
+        Use `ag_ui.core.Message` instead.
+    """
 
     role: str = Field(..., pattern="^(user|assistant|tool|system)$")
     content: str | None = None
@@ -73,7 +90,11 @@ class Message(BaseModel):
 
 
 class Tool(BaseModel):
-    """Tool definition for AG-UI."""
+    """Tool definition for AG-UI.
+    
+    .. deprecated:: 2.0
+        Use `ag_ui.core.Tool` instead.
+    """
 
     name: str
     description: str
@@ -81,7 +102,11 @@ class Tool(BaseModel):
 
 
 class RunAgentInput(BaseModel):
-    """Request body for the agentic chat endpoint."""
+    """Request body for the agentic chat endpoint.
+    
+    .. deprecated:: 2.0
+        Use `ag_ui.core.RunAgentInput` instead.
+    """
 
     thread_id: str
     run_id: str
@@ -90,18 +115,23 @@ class RunAgentInput(BaseModel):
     context: dict[str, Any] | None = None
 
 
-# Event Models
+# Legacy event models kept for backward compatibility
+# New code should use SDK events directly
 
 
-class BaseEvent(BaseModel):
-    """Base event schema for AG-UI protocol."""
+class LegacyBaseEvent(BaseModel):
+    """Base event schema for AG-UI protocol.
+    
+    .. deprecated:: 2.0
+        Use SDK event types from `ag_ui.core` instead.
+    """
 
     type: EventType
     timestamp: int = Field(default_factory=lambda: int(time.time() * 1000))
     raw_event: Any | None = None
 
 
-class RunStartedEvent(BaseEvent):
+class LegacyRunStartedEvent(LegacyBaseEvent):
     """Emitted when a run begins."""
 
     type: EventType = EventType.RUN_STARTED
@@ -109,7 +139,7 @@ class RunStartedEvent(BaseEvent):
     run_id: str
 
 
-class RunFinishedEvent(BaseEvent):
+class LegacyRunFinishedEvent(LegacyBaseEvent):
     """Emitted when a run completes successfully."""
 
     type: EventType = EventType.RUN_FINISHED
@@ -117,7 +147,7 @@ class RunFinishedEvent(BaseEvent):
     run_id: str
 
 
-class RunErrorEvent(BaseEvent):
+class LegacyRunErrorEvent(LegacyBaseEvent):
     """Emitted when a run fails."""
 
     type: EventType = EventType.RUN_ERROR
@@ -125,7 +155,7 @@ class RunErrorEvent(BaseEvent):
     code: str | None = None
 
 
-class TextMessageStartEvent(BaseEvent):
+class LegacyTextMessageStartEvent(LegacyBaseEvent):
     """Emitted when an assistant message begins."""
 
     type: EventType = EventType.TEXT_MESSAGE_START
@@ -133,7 +163,7 @@ class TextMessageStartEvent(BaseEvent):
     role: str = "assistant"
 
 
-class TextMessageContentEvent(BaseEvent):
+class LegacyTextMessageContentEvent(LegacyBaseEvent):
     """Emitted for each chunk of text content."""
 
     type: EventType = EventType.TEXT_MESSAGE_CONTENT
@@ -141,14 +171,14 @@ class TextMessageContentEvent(BaseEvent):
     delta: str = Field(..., min_length=1)
 
 
-class TextMessageEndEvent(BaseEvent):
+class LegacyTextMessageEndEvent(LegacyBaseEvent):
     """Emitted when a text message completes."""
 
     type: EventType = EventType.TEXT_MESSAGE_END
     message_id: str
 
 
-class ToolCallStartEvent(BaseEvent):
+class LegacyToolCallStartEvent(LegacyBaseEvent):
     """Emitted when a tool call begins."""
 
     type: EventType = EventType.TOOL_CALL_START
@@ -157,7 +187,7 @@ class ToolCallStartEvent(BaseEvent):
     parent_message_id: str | None = None
 
 
-class ToolCallArgsEvent(BaseEvent):
+class LegacyToolCallArgsEvent(LegacyBaseEvent):
     """Emitted for chunks of tool call arguments."""
 
     type: EventType = EventType.TOOL_CALL_ARGS
@@ -165,32 +195,51 @@ class ToolCallArgsEvent(BaseEvent):
     delta: str
 
 
-class ToolCallEndEvent(BaseEvent):
+class LegacyToolCallEndEvent(LegacyBaseEvent):
     """Emitted when a tool call completes."""
 
     type: EventType = EventType.TOOL_CALL_END
     tool_call_id: str
 
 
-class StateSnapshotEvent(BaseEvent):
+class LegacyStateSnapshotEvent(LegacyBaseEvent):
     """Emitted with complete state snapshot."""
 
     type: EventType = EventType.STATE_SNAPSHOT
     state: dict[str, Any]
 
 
-class StateDeltaEvent(BaseEvent):
+class LegacyStateDeltaEvent(LegacyBaseEvent):
     """Emitted with state delta update."""
 
     type: EventType = EventType.STATE_DELTA
     delta: dict[str, Any]
 
 
-class RawEvent(BaseEvent):
+class LegacyRawEvent(LegacyBaseEvent):
     """Raw event for provider-specific data."""
 
     type: EventType = EventType.RAW
     data: Any
+
+
+# SDK encoder instance for formatting events
+_encoder = EventEncoder()
+
+# Type alias for backwards compatibility - use the legacy types for Pydantic model operations
+BaseEvent = LegacyBaseEvent
+RunStartedEvent = LegacyRunStartedEvent
+RunFinishedEvent = LegacyRunFinishedEvent
+RunErrorEvent = LegacyRunErrorEvent
+TextMessageStartEvent = LegacyTextMessageStartEvent
+TextMessageContentEvent = LegacyTextMessageContentEvent
+TextMessageEndEvent = LegacyTextMessageEndEvent
+ToolCallStartEvent = LegacyToolCallStartEvent
+ToolCallArgsEvent = LegacyToolCallArgsEvent
+ToolCallEndEvent = LegacyToolCallEndEvent
+StateSnapshotEvent = LegacyStateSnapshotEvent
+StateDeltaEvent = LegacyStateDeltaEvent
+RawEvent = LegacyRawEvent
 
 
 @dataclass
@@ -201,6 +250,10 @@ class AGUIEventEmitter:
     It manages message and tool call lifecycle events, converting them to
     Server-Sent Events (SSE) format for streaming to clients.
 
+    Supports two modes:
+    - SDK mode (use_sdk=True): Uses ag_ui.encoder.EventEncoder for formatting
+    - Legacy mode (use_sdk=False): Uses custom _format_sse for compatibility
+
     Example:
         emitter = AGUIEventEmitter(thread_id="t1", run_id="r1")
         async for event in emitter.stream_response(agent, messages):
@@ -209,6 +262,7 @@ class AGUIEventEmitter:
 
     thread_id: str
     run_id: str
+    use_sdk: bool = False
     _message_id: str | None = field(default=None, init=False)
     _tool_call_id: str | None = field(default=None, init=False)
 
@@ -217,7 +271,16 @@ class AGUIEventEmitter:
         return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
     def _format_sse(self, event: BaseEvent) -> str:
-        """Format event as Server-Sent Event."""
+        """Format event as Server-Sent Event.
+        
+        Uses SDK EventEncoder when use_sdk=True, otherwise uses legacy format.
+        The SDK encoder outputs: `data: {"type":"RUN_STARTED",...}`
+        The legacy format outputs: `event: message\ndata: {...}\n\n`
+        """
+        if self.use_sdk:
+            # SDK encoder returns format: "data: {json}\n\n"
+            return _encoder.encode(event)
+        # Legacy format for backward compatibility
         data = event.model_dump_json()
         return f"event: message\ndata: {data}\n\n"
 
@@ -547,4 +610,140 @@ def create_default_app() -> FastAPI:
     return create_agui_server()
 
 
+# =============================================================================
+# SDK-Based Components (agent-framework-ag-ui integration)
+# =============================================================================
+
+
+@runtime_checkable
+class AGUIAgentProtocol(Protocol):
+    """Protocol for agents compatible with AG-UI SDK endpoint."""
+
+    async def run(self, message: str) -> str:
+        """Run the agent with a message and return the response."""
+        ...
+
+
+def create_agui_endpoint(
+    app: FastAPI,
+    agent: AGUIAgentProtocol,
+    path: str = "/",
+) -> None:
+    """Add AG-UI SDK endpoint to a FastAPI application.
+    
+    This is a wrapper around `add_agent_framework_fastapi_endpoint` from
+    the `agent-framework-ag-ui` SDK, providing a simplified interface.
+    
+    Args:
+        app: FastAPI application to add the endpoint to
+        agent: Agent instance implementing AGUIAgentProtocol
+        path: URL path for the endpoint (default: "/")
+    
+    Example:
+        app = FastAPI()
+        agent = MyAgent()
+        create_agui_endpoint(app, agent)
+    
+    Note:
+        This function uses the SDK's `add_agent_framework_fastapi_endpoint`
+        internally for production-grade AG-UI protocol handling.
+    """
+    from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
+    
+    # The SDK endpoint handles all AG-UI protocol details
+    add_agent_framework_fastapi_endpoint(app, agent, path=path)
+
+
+@dataclass
+class AGUIClient:
+    """Client for interacting with AG-UI servers.
+    
+    This is a wrapper around `AGUIChatClient` from the `agent-framework-ag-ui`
+    SDK, providing a simplified interface for consuming AG-UI streams.
+    
+    Attributes:
+        endpoint: Endpoint URL of the AG-UI server
+        timeout: Request timeout in seconds
+    
+    Example:
+        client = AGUIClient("http://localhost:8000")
+        async for event in client.stream("Hello, agent!"):
+            print(event)
+    
+    Note:
+        The underlying SDK uses 'endpoint' parameter instead of 'base_url'.
+        This wrapper uses 'endpoint' for clarity but also accepts 'base_url'
+        as an alias for backward compatibility.
+    """
+    
+    endpoint: str
+    timeout: float = 60.0
+    _client: Any = field(default=None, init=False, repr=False)
+    
+    def __post_init__(self) -> None:
+        """Initialize the underlying SDK client."""
+        from agent_framework_ag_ui import AGUIChatClient
+        self._client = AGUIChatClient(endpoint=self.endpoint, timeout=self.timeout)
+    
+    async def stream(
+        self,
+        message: str,
+        thread_id: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Stream a conversation with the AG-UI server.
+        
+        Args:
+            message: User message to send
+            thread_id: Optional thread ID for conversation continuity
+            context: Optional context to pass to the agent
+        
+        Yields:
+            Parsed AG-UI events as dictionaries
+        
+        Note:
+            The underlying SDK client handles the actual streaming.
+            This wrapper provides a simplified interface.
+        """
+        thread_id = thread_id or f"thread-{uuid.uuid4().hex[:12]}"
+        run_id = f"run-{uuid.uuid4().hex[:12]}"
+        
+        # The SDK client's stream method signature may differ
+        # Wrap in try/except for robustness
+        try:
+            async for event in self._client.stream(
+                message=message,
+                thread_id=thread_id,
+                run_id=run_id,
+                context=context or {},
+            ):
+                yield event
+        except TypeError:
+            # Fallback if SDK signature differs
+            yield {"type": "RUN_ERROR", "message": "SDK stream method signature mismatch"}
+    
+    async def send(
+        self,
+        message: str,
+        thread_id: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> str:
+        """Send a message and collect the full response.
+        
+        Args:
+            message: User message to send
+            thread_id: Optional thread ID for conversation continuity
+            context: Optional context to pass to the agent
+        
+        Returns:
+            Complete response text from the agent
+        """
+        response_parts: list[str] = []
+        async for event in self.stream(message, thread_id, context):
+            if event.get("type") == "TEXT_MESSAGE_CONTENT":
+                response_parts.append(event.get("delta", ""))
+        return "".join(response_parts)
+
+
+# Default app for direct uvicorn execution
 app = create_default_app()

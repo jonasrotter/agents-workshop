@@ -5,8 +5,10 @@ This module exports agent implementations:
 - ResearchAgent: Agent for web research tasks
 - AGUIServer: AG-UI protocol server for streaming chat
 - AGUIEventEmitter: Event emitter for AG-UI streaming
+- AGUIClient: Client for consuming AG-UI streams (SDK wrapper)
 - A2AServer: A2A protocol server for agent interoperability
 - create_agui_server: Factory function for AG-UI server
+- create_agui_endpoint: Add SDK endpoint to FastAPI app
 - create_a2a_server: Factory function for A2A server
 - DeclarativeAgent: Agent loaded from YAML (legacy format)
 - DeclarativeAgentLoader: Load agents from YAML (legacy format)
@@ -41,6 +43,15 @@ Example:
     from src.agents import create_research_agent, create_summarizer_agent
     research = create_research_agent()
     summarizer = create_summarizer_agent()
+    
+    # For SDK-based AG-UI endpoint
+    from src.agents import create_agui_endpoint, AGUIClient
+    app = FastAPI()
+    create_agui_endpoint(app, agent)
+    
+    # Client consumption
+    client = AGUIClient("http://localhost:8000")
+    response = await client.send("Hello!")
 """
 
 from src.agents.base_agent import BaseAgent
@@ -48,7 +59,10 @@ from src.agents.research_agent import ResearchAgent
 from src.agents.agui_server import (
     AGUIServer,
     AGUIEventEmitter,
+    AGUIClient,
+    AGUIAgentProtocol,
     create_agui_server,
+    create_agui_endpoint,
     EventType,
 )
 from src.agents.a2a_server import (
@@ -112,9 +126,13 @@ from src.agents.moderator_agent import (
 __all__ = [
     "BaseAgent",
     "ResearchAgent",
+    # AG-UI Server and SDK components
     "AGUIServer",
     "AGUIEventEmitter",
+    "AGUIClient",
+    "AGUIAgentProtocol",
     "create_agui_server",
+    "create_agui_endpoint",
     "EventType",
     # A2A Server
     "A2AServer",

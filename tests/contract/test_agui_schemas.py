@@ -37,8 +37,12 @@ class TestEventTypeEnum:
     """Tests for EventType enumeration."""
 
     def test_all_event_types_defined(self) -> None:
-        """All contract event types should be defined."""
-        expected_types = {
+        """All contract event types should be defined.
+        
+        The SDK EventType enum contains additional types beyond the contract minimum.
+        This test verifies all required types are present as a subset.
+        """
+        required_types = {
             "RUN_STARTED",
             "RUN_FINISHED",
             "RUN_ERROR",
@@ -53,7 +57,10 @@ class TestEventTypeEnum:
             "RAW",
         }
         actual_types = {e.value for e in EventType}
-        assert expected_types == actual_types
+        # SDK EventType is a superset of the required types
+        assert required_types.issubset(actual_types), (
+            f"Missing required types: {required_types - actual_types}"
+        )
 
     def test_event_type_string_values(self) -> None:
         """Event types should have string values."""
