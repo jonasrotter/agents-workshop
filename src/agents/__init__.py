@@ -53,11 +53,22 @@ from src.agents.agui_server import (
 )
 from src.agents.a2a_server import (
     A2AServer,
+    WorkshopRequestHandler,
     create_a2a_server,
+    Skill,  # Alias for AgentSkill
+)
+
+# Re-export SDK types for backward compatibility
+from a2a.types import (
     AgentCard,
-    Skill,
-    TaskState,
+    AgentSkill,
+    AgentCapabilities,
     Task,
+    TaskState,
+    TaskStatus,
+    Message,
+    TextPart,
+    Artifact,
 )
 from src.agents.declarative import (
     DeclarativeAgent,
@@ -86,12 +97,21 @@ __all__ = [
     "AGUIEventEmitter",
     "create_agui_server",
     "EventType",
+    # A2A Server
     "A2AServer",
+    "WorkshopRequestHandler",
     "create_a2a_server",
+    # A2A SDK types (re-exports)
     "AgentCard",
-    "Skill",
-    "TaskState",
+    "AgentSkill",
+    "AgentCapabilities",
+    "Skill",  # Alias for AgentSkill
     "Task",
+    "TaskState",
+    "TaskStatus",
+    "Message",
+    "TextPart",
+    "Artifact",
     # Declarative agents
     "DeclarativeAgent",
     "DeclarativeAgentLoader",

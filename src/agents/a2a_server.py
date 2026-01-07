@@ -1,342 +1,391 @@
-"""A2A (Agent-to-Agent) Protocol Server implementation.
+"""A2A (Agent-to-Agent) Protocol Server implementation using official SDK.
 
-This module implements the A2A protocol for agent interoperability,
-enabling agents to discover and invoke each other remotely.
+This module implements the A2A protocol for agent interoperability using the
+official a2a-sdk package, enabling agents to discover and invoke each other remotely.
 
 A2A Protocol enables:
 - Agent discovery via Agent Cards
 - Remote task invocation via JSON-RPC
 - Task status tracking and cancellation
-- Streaming and push notifications
+- Streaming support
 
 Reference: specs/001-agentic-patterns-workshop/contracts/a2a-protocol.md
+SDK: https://github.com/google/a2a-python
 """
 
 from __future__ import annotations
 
-import asyncio
 import uuid
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any
+from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from fastapi import FastAPI
 
-from src.common.config import get_settings
+# SDK imports
+from a2a.server.apps import A2AFastAPIApplication
+from a2a.server.context import ServerCallContext
+from a2a.server.request_handlers import RequestHandler
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentProvider,
+    AgentSkill,
+    Artifact,
+    DeleteTaskPushNotificationConfigParams,
+    GetTaskPushNotificationConfigParams,
+    ListTaskPushNotificationConfigParams,
+    Message,
+    MessageSendParams,
+    Part,
+    Task,
+    TaskArtifactUpdateEvent,
+    TaskIdParams,
+    TaskPushNotificationConfig,
+    TaskQueryParams,
+    TaskState,
+    TaskStatus,
+    TaskStatusUpdateEvent,
+    TextPart,
+)
+
 from src.common.exceptions import A2AError
 from src.common.telemetry import get_tracer, record_exception
 
 tracer = get_tracer(__name__)
 
 
-# Task States
-
-
-class TaskState(str, Enum):
-    """A2A task states."""
-
-    SUBMITTED = "submitted"
-    WORKING = "working"
-    INPUT_REQUIRED = "input-required"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class AuthType(str, Enum):
-    """Authentication types for A2A."""
-
-    NONE = "none"
-    BEARER = "bearer"
-    API_KEY = "api_key"
-    OAUTH2 = "oauth2"
-
-
-# JSON-RPC Error Codes
-
-
-class ErrorCode:
-    """Standard JSON-RPC and A2A error codes."""
-
-    PARSE_ERROR = -32700
-    INVALID_REQUEST = -32600
-    METHOD_NOT_FOUND = -32601
-    INVALID_PARAMS = -32602
-    INTERNAL_ERROR = -32603
-    TASK_NOT_FOUND = -32000
-    CONTEXT_NOT_FOUND = -32001
-    RATE_LIMITED = -32002
-    UNAUTHORIZED = -32003
-
-
-# Pydantic Models
-
-
-class Skill(BaseModel):
-    """Agent skill definition."""
-
-    id: str
-    name: str
-    description: str
-    inputSchema: dict[str, Any] | None = None
-    outputSchema: dict[str, Any] | None = None
-
-
-class AuthConfig(BaseModel):
-    """Authentication configuration."""
-
-    type: AuthType = AuthType.NONE
-    scheme: str | None = None
-
-
-class Capabilities(BaseModel):
-    """Agent capabilities."""
-
-    streaming: bool = False
-    pushNotifications: bool = False
-    stateManagement: bool = False
-
-
-class Provider(BaseModel):
-    """Agent provider information."""
-
-    name: str
-    url: str | None = None
-
-
-class AgentCard(BaseModel):
-    """A2A Agent Card for capability advertisement."""
-
-    name: str
-    description: str | None = None
-    url: str
-    version: str = "1.0.0"
-    capabilities: Capabilities = Field(default_factory=Capabilities)
-    skills: list[Skill]
-    authentication: AuthConfig = Field(default_factory=AuthConfig)
-    provider: Provider | None = None
-
-
-# Message Parts
-
-
-class TextPart(BaseModel):
-    """Text message part."""
-
-    kind: str = "text"
-    text: str
-
-
-class FilePart(BaseModel):
-    """File message part."""
-
-    kind: str = "file"
-    mimeType: str
-    data: str | None = None
-    uri: str | None = None
-
-
-class DataPart(BaseModel):
-    """Structured data message part."""
-
-    kind: str = "data"
-    mimeType: str = "application/json"
-    data: Any
-
-
-MessagePart = TextPart | FilePart | DataPart
-
-
-class Message(BaseModel):
-    """A2A message structure."""
-
-    role: str
-    parts: list[MessagePart]
-    messageId: str | None = None
-
-
-# JSON-RPC Models
-
-
-class JSONRPCError(BaseModel):
-    """JSON-RPC error object."""
-
-    code: int
-    message: str
-    data: Any | None = None
-
-
-class JSONRPCRequest(BaseModel):
-    """JSON-RPC request structure."""
-
-    jsonrpc: str = "2.0"
-    id: str | int
-    method: str
-    params: dict[str, Any] | None = None
-
-
-class JSONRPCResponse(BaseModel):
-    """JSON-RPC response structure."""
-
-    jsonrpc: str = "2.0"
-    id: str | int
-    result: Any | None = None
-    error: JSONRPCError | None = None
-
-
-# Task Models
-
-
-class TaskStatus(BaseModel):
-    """Task status information."""
-
-    state: TaskState
-    message: Message | None = None
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
-
-
-class Artifact(BaseModel):
-    """Task artifact (output)."""
-
-    artifactId: str
-    name: str
-    parts: list[MessagePart]
-
-
-class Task(BaseModel):
-    """A2A task representation."""
-
-    kind: str = "task"
-    id: str
-    contextId: str
-    status: TaskStatus
-    artifacts: list[Artifact] | None = None
-    history: list[Message] | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-# Method Parameters
-
-
-class MessageSendParams(BaseModel):
-    """Parameters for message/send method."""
-
-    message: Message
-    contextId: str | None = None
-
-
-class TaskGetParams(BaseModel):
-    """Parameters for tasks/get method."""
-
-    id: str
-    historyLength: int | None = None
-
-
-class TaskListParams(BaseModel):
-    """Parameters for tasks/list method."""
-
-    contextId: str | None = None
-    status: TaskState | None = None
-    pageSize: int = 10
-    pageToken: str | None = None
-
-
-class TaskCancelParams(BaseModel):
-    """Parameters for tasks/cancel method."""
-
-    id: str
-
-
-@dataclass
-class TaskManager:
-    """Manages A2A tasks in memory.
-
-    In production, this would be backed by a database.
+# Backward compatibility aliases
+Skill = AgentSkill  # Alias for backward compatibility
+
+
+class WorkshopRequestHandler(RequestHandler):
+    """Request handler that wraps workshop agents.
+    
+    This handler implements the A2A RequestHandler interface to process
+    messages through our workshop agents, managing task state via the SDK's
+    InMemoryTaskStore.
+    
+    Attributes:
+        agent: Workshop agent with async `run(prompt: str) -> str` method
+        task_store: InMemoryTaskStore for task persistence
     """
 
-    tasks: dict[str, Task] = field(default_factory=dict)
-    contexts: dict[str, list[str]] = field(default_factory=dict)
+    def __init__(
+        self,
+        agent: Any | None = None,
+        task_store: InMemoryTaskStore | None = None,
+    ) -> None:
+        """Initialize handler.
+        
+        Args:
+            agent: Agent with `run(str) -> str` method
+            task_store: Task storage implementation (defaults to new store)
+        """
+        self.agent = agent
+        self.task_store = task_store or InMemoryTaskStore()
 
-    def create_task(
-        self, context_id: str | None = None, message: Message | None = None
+    async def on_message_send(
+        self,
+        params: MessageSendParams,
+        context: ServerCallContext | None = None,
     ) -> Task:
-        """Create a new task."""
-        task_id = f"task-{uuid.uuid4().hex[:12]}"
-        context_id = context_id or f"ctx-{uuid.uuid4().hex[:12]}"
+        """Process message through workshop agent.
+        
+        Flow:
+        1. Create task in SUBMITTED state
+        2. Extract text from message parts
+        3. Update task to WORKING state
+        4. Run agent with extracted text
+        5. Create artifact with response
+        6. Update task to COMPLETED (or FAILED)
+        7. Return final task
+        
+        Args:
+            params: Message parameters containing the message to process
+            context: Server call context (optional)
+            
+        Returns:
+            Completed task with artifacts
+        """
+        with tracer.start_as_current_span("a2a_message_send") as span:
+            # Generate IDs
+            task_id = f"task-{uuid.uuid4().hex[:12]}"
+            context_id = f"ctx-{uuid.uuid4().hex[:12]}"
+            
+            span.set_attribute("task_id", task_id)
+            
+            # Create task in SUBMITTED state
+            task = Task(
+                id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.submitted),
+                history=[params.message] if params.message else [],
+            )
+            await self.task_store.save(task)
+            
+            # Extract text from message
+            text = self._extract_text(params.message)
+            span.set_attribute("input_length", len(text))
+            
+            # Process with agent if available
+            if self.agent:
+                # Update to WORKING state
+                task.status = TaskStatus(state=TaskState.working)
+                await self.task_store.save(task)
+                
+                try:
+                    # Run agent
+                    response = await self.agent.run(text)
+                    
+                    # Create artifact with response
+                    artifact = Artifact(
+                        artifact_id=f"art-{uuid.uuid4().hex[:8]}",
+                        name="response",
+                        parts=[TextPart(text=response)],
+                    )
+                    
+                    # Update to COMPLETED
+                    task.status = TaskStatus(state=TaskState.completed)
+                    task.artifacts = [artifact]
+                    task.history = (task.history or []) + [
+                        Message(
+                            role="agent",
+                            parts=[TextPart(text=response)],
+                        )
+                    ]
+                    
+                except Exception as e:
+                    record_exception(e)
+                    # Update to FAILED
+                    task.status = TaskStatus(
+                        state=TaskState.failed,
+                        message=Message(
+                            role="agent",
+                            parts=[TextPart(text=f"Error: {e}")],
+                        ),
+                    )
+            else:
+                # No agent - mark as completed with echo
+                task.status = TaskStatus(state=TaskState.completed)
+                task.artifacts = [
+                    Artifact(
+                        artifact_id=f"art-{uuid.uuid4().hex[:8]}",
+                        name="echo",
+                        parts=[TextPart(text=f"Echo: {text}")],
+                    )
+                ]
+            
+            await self.task_store.save(task)
+            return task
 
-        task = Task(
-            id=task_id,
-            contextId=context_id,
-            status=TaskStatus(
-                state=TaskState.SUBMITTED,
-                message=message,
-            ),
-            history=[message] if message else [],
+    async def on_message_send_stream(
+        self,
+        params: MessageSendParams,
+        context: ServerCallContext | None = None,
+    ) -> AsyncIterator[Task | Message]:
+        """Stream message processing (delegates to non-streaming).
+        
+        Args:
+            params: Message parameters
+            context: Server call context
+            
+        Yields:
+            Final task result
+        """
+        task = await self.on_message_send(params, context)
+        yield task
+
+    async def on_get_task(
+        self,
+        params: TaskQueryParams,
+        context: ServerCallContext | None = None,
+    ) -> Task:
+        """Get task by ID.
+        
+        Args:
+            params: Task query parameters with ID
+            context: Server call context
+            
+        Returns:
+            Task if found
+            
+        Raises:
+            A2AError: If task not found
+        """
+        task = await self.task_store.get(params.id)
+        if not task:
+            raise A2AError(
+                f"Task not found: {params.id}",
+                details={"task_id": params.id},
+            )
+        
+        # Limit history if requested
+        if params.history_length and task.history:
+            task.history = task.history[-params.history_length:]
+        
+        return task
+
+    async def on_cancel_task(
+        self,
+        params: TaskIdParams,
+        context: ServerCallContext | None = None,
+    ) -> Task:
+        """Cancel a task.
+        
+        Args:
+            params: Task ID parameters
+            context: Server call context
+            
+        Returns:
+            Canceled task
+            
+        Raises:
+            A2AError: If task not found
+        """
+        task = await self.task_store.get(params.id)
+        if not task:
+            raise A2AError(
+                f"Task not found: {params.id}",
+                details={"task_id": params.id},
+            )
+        
+        task.status = TaskStatus(state=TaskState.canceled)
+        await self.task_store.save(task)
+        return task
+
+    def _extract_text(self, message: Message | None) -> str:
+        """Extract text content from message parts.
+        
+        Iterates through parts and returns first TextPart's text.
+        Returns empty string if no TextPart found.
+        
+        Args:
+            message: Message with parts
+            
+        Returns:
+            Extracted text or empty string
+        """
+        if not message or not message.parts:
+            return ""
+        
+        for part in message.parts:
+            if isinstance(part, TextPart):
+                return part.text
+            # Handle dict-style parts from JSON
+            if isinstance(part, dict) and part.get("kind") == "text":
+                return part.get("text", "")
+            # Handle Part union types
+            if hasattr(part, "root") and hasattr(part.root, "text"):
+                return part.root.text
+        
+        return ""
+
+    # Push notification methods (not supported in workshop)
+    
+    async def on_set_task_push_notification_config(
+        self,
+        params: TaskPushNotificationConfig,
+        context: ServerCallContext | None = None,
+    ) -> TaskPushNotificationConfig:
+        """Set push notification config (not supported).
+        
+        Args:
+            params: Push notification config
+            context: Server call context
+            
+        Raises:
+            A2AError: Push notifications not supported
+        """
+        raise A2AError(
+            "Push notifications not supported",
+            details={"feature": "push_notifications"},
         )
 
-        self.tasks[task_id] = task
-
-        if context_id not in self.contexts:
-            self.contexts[context_id] = []
-        self.contexts[context_id].append(task_id)
-
-        return task
-
-    def get_task(self, task_id: str) -> Task | None:
-        """Get task by ID."""
-        return self.tasks.get(task_id)
-
-    def update_task_status(
+    async def on_get_task_push_notification_config(
         self,
-        task_id: str,
-        state: TaskState,
-        message: Message | None = None,
-        artifacts: list[Artifact] | None = None,
-    ) -> Task | None:
-        """Update task status."""
-        task = self.tasks.get(task_id)
-        if task:
-            task.status = TaskStatus(state=state, message=message)
-            if artifacts:
-                task.artifacts = artifacts
-        return task
+        params: TaskIdParams | GetTaskPushNotificationConfigParams,
+        context: ServerCallContext | None = None,
+    ) -> TaskPushNotificationConfig:
+        """Get push notification config (not supported).
+        
+        Args:
+            params: Task ID params
+            context: Server call context
+            
+        Raises:
+            A2AError: Push notifications not supported
+        """
+        raise A2AError(
+            "Push notifications not supported",
+            details={"feature": "push_notifications"},
+        )
 
-    def list_tasks(
+    async def on_delete_task_push_notification_config(
         self,
-        context_id: str | None = None,
-        status: TaskState | None = None,
-        page_size: int = 10,
-    ) -> list[Task]:
-        """List tasks with optional filtering."""
-        tasks = list(self.tasks.values())
+        params: DeleteTaskPushNotificationConfigParams,
+        context: ServerCallContext | None = None,
+    ) -> None:
+        """Delete push notification config (not supported).
+        
+        Args:
+            params: Delete params
+            context: Server call context
+            
+        Raises:
+            A2AError: Push notifications not supported
+        """
+        raise A2AError(
+            "Push notifications not supported",
+            details={"feature": "push_notifications"},
+        )
 
-        if context_id:
-            task_ids = self.contexts.get(context_id, [])
-            tasks = [t for t in tasks if t.id in task_ids]
+    async def on_list_task_push_notification_config(
+        self,
+        params: ListTaskPushNotificationConfigParams,
+        context: ServerCallContext | None = None,
+    ) -> list[TaskPushNotificationConfig]:
+        """List push notification configs (not supported).
+        
+        Args:
+            params: List params
+            context: Server call context
+            
+        Raises:
+            A2AError: Push notifications not supported
+        """
+        raise A2AError(
+            "Push notifications not supported",
+            details={"feature": "push_notifications"},
+        )
 
-        if status:
-            tasks = [t for t in tasks if t.status.state == status]
-
-        return tasks[:page_size]
-
-    def cancel_task(self, task_id: str) -> Task | None:
-        """Cancel a task."""
-        return self.update_task_status(task_id, TaskState.CANCELLED)
+    async def on_resubscribe_to_task(
+        self,
+        params: TaskIdParams,
+        context: ServerCallContext | None = None,
+    ) -> AsyncIterator[Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent]:
+        """Resubscribe to task events (not supported).
+        
+        Args:
+            params: Task ID params
+            context: Server call context
+            
+        Raises:
+            A2AError: Task resubscription not supported
+        """
+        raise A2AError(
+            "Task resubscription not supported",
+            details={"feature": "resubscription"},
+        )
+        # This is an async generator, so we need a yield to make it valid
+        # But we raise before getting here
+        yield  # type: ignore[misc]
 
 
 class A2AServer:
-    """A2A Protocol Server using FastAPI.
+    """A2A Protocol Server using official SDK.
 
-    This server implements the A2A protocol for agent interoperability.
-    It provides endpoints for agent discovery and JSON-RPC task invocation.
+    This server wraps the A2AFastAPIApplication from the a2a-sdk,
+    providing a simplified interface for the workshop.
 
     Example:
         server = A2AServer(agent=my_agent, name="Research Agent")
@@ -351,7 +400,7 @@ class A2AServer:
         description: str = "A2A Protocol Agent",
         url: str = "http://localhost:8000",
         version: str = "1.0.0",
-        skills: list[Skill] | None = None,
+        skills: list[AgentSkill] | None = None,
     ) -> None:
         """Initialize A2A server.
 
@@ -369,36 +418,31 @@ class A2AServer:
         self.url = url
         self.version = version
         self.skills = skills or []
+        self._task_store = InMemoryTaskStore()
+        self._handler: WorkshopRequestHandler | None = None
         self._app: FastAPI | None = None
-        self._task_manager = TaskManager()
 
     @property
     def agent_card(self) -> AgentCard:
         """Get the Agent Card for this server."""
-        return self._build_agent_card()
-
-    def _build_agent_card(self) -> AgentCard:
-        """Build Agent Card from configuration."""
         return AgentCard(
             name=self.name,
             description=self.description,
             url=self.url,
             version=self.version,
-            capabilities=Capabilities(
+            default_input_modes=["text"],
+            default_output_modes=["text"],
+            capabilities=AgentCapabilities(
                 streaming=True,
-                pushNotifications=False,
-                stateManagement=True,
+                push_notifications=False,
+                state_transition_history=True,
             ),
             skills=self.skills,
-            authentication=AuthConfig(type=AuthType.NONE),
-            provider=Provider(name="Workshop Demo"),
+            provider=AgentProvider(
+                organization="Workshop Demo",
+                url="https://github.com/workshop",
+            ),
         )
-
-    @asynccontextmanager
-    async def _lifespan(self, app: FastAPI) -> AsyncGenerator[None, None]:
-        """Application lifespan manager."""
-        with tracer.start_as_current_span("a2a_server_startup"):
-            yield
 
     def create_app(self) -> FastAPI:
         """Create FastAPI application with A2A endpoints.
@@ -406,240 +450,30 @@ class A2AServer:
         Returns:
             Configured FastAPI application
         """
-        self._app = FastAPI(
-            title=f"{self.name} - A2A Server",
-            description=self.description,
-            lifespan=self._lifespan,
+        # Create handler with agent and task store
+        self._handler = WorkshopRequestHandler(
+            agent=self.agent,
+            task_store=self._task_store,
         )
-
-        # Configure CORS
-        self._app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+        
+        # Create A2A application using SDK
+        a2a_app = A2AFastAPIApplication(
+            agent_card=self.agent_card,
+            http_handler=self._handler,
         )
-
-        # Register routes
-        self._register_routes()
-
-        return self._app
-
-    def _register_routes(self) -> None:
-        """Register API routes."""
-        if not self._app:
-            raise A2AError("App not created", details={})
-
+        
+        # Build and configure FastAPI app
+        self._app = a2a_app.build()
+        
+        # Add health endpoint (not provided by SDK)
         @self._app.get("/health")
         async def health() -> dict[str, str]:
             """Health check endpoint."""
             return {"status": "healthy", "protocol": "A2A", "agent": self.name}
+        
+        return self._app
 
-        @self._app.get("/.well-known/agent-card.json")
-        async def agent_card() -> dict[str, Any]:
-            """Agent Card endpoint for capability discovery."""
-            return self._build_agent_card().model_dump()
-
-        @self._app.post("/")
-        async def json_rpc(request: Request) -> JSONResponse:
-            """JSON-RPC endpoint for A2A protocol."""
-            try:
-                body = await request.json()
-                rpc_request = JSONRPCRequest.model_validate(body)
-                response = await self._handle_rpc(rpc_request)
-                return JSONResponse(content=response.model_dump())
-            except Exception as e:
-                record_exception(e)
-                error_response = JSONRPCResponse(
-                    id=body.get("id", 0) if isinstance(body, dict) else 0,
-                    error=JSONRPCError(
-                        code=ErrorCode.INTERNAL_ERROR,
-                        message=str(e),
-                    ),
-                )
-                return JSONResponse(content=error_response.model_dump())
-
-    async def _handle_rpc(self, request: JSONRPCRequest) -> JSONRPCResponse:
-        """Handle JSON-RPC request and route to appropriate method.
-
-        Args:
-            request: Parsed JSON-RPC request
-
-        Returns:
-            JSON-RPC response
-        """
-        with tracer.start_as_current_span("a2a_handle_rpc") as span:
-            span.set_attribute("method", request.method)
-            span.set_attribute("request_id", str(request.id))
-
-            method_handlers = {
-                "message/send": self._handle_message_send,
-                "tasks/get": self._handle_tasks_get,
-                "tasks/list": self._handle_tasks_list,
-                "tasks/cancel": self._handle_tasks_cancel,
-            }
-
-            handler = method_handlers.get(request.method)
-            if not handler:
-                return JSONRPCResponse(
-                    id=request.id,
-                    error=JSONRPCError(
-                        code=ErrorCode.METHOD_NOT_FOUND,
-                        message=f"Method not found: {request.method}",
-                    ),
-                )
-
-            try:
-                result = await handler(request.params or {})
-                return JSONRPCResponse(id=request.id, result=result)
-            except A2AError as e:
-                return JSONRPCResponse(
-                    id=request.id,
-                    error=JSONRPCError(
-                        code=ErrorCode.INTERNAL_ERROR,
-                        message=e.message,
-                        data=e.details,
-                    ),
-                )
-
-    async def _handle_message_send(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle message/send method.
-
-        Args:
-            params: Method parameters
-
-        Returns:
-            Task or message result
-        """
-        parsed = MessageSendParams.model_validate(params)
-
-        # Create task for processing
-        task = self._task_manager.create_task(
-            context_id=parsed.contextId,
-            message=parsed.message,
-        )
-
-        # Process with agent if available
-        if self.agent:
-            # Update to working state
-            self._task_manager.update_task_status(
-                task.id, TaskState.WORKING
-            )
-
-            # Extract text from message
-            text = ""
-            for part in parsed.message.parts:
-                if isinstance(part, TextPart):
-                    text = part.text
-                    break
-
-            try:
-                # Run agent
-                response = await self.agent.run(text)
-
-                # Create artifact with response
-                artifact = Artifact(
-                    artifactId=f"art-{uuid.uuid4().hex[:8]}",
-                    name="response",
-                    parts=[TextPart(text=response)],
-                )
-
-                # Update to completed
-                self._task_manager.update_task_status(
-                    task.id,
-                    TaskState.COMPLETED,
-                    message=Message(
-                        role="agent",
-                        parts=[TextPart(text=response)],
-                    ),
-                    artifacts=[artifact],
-                )
-
-            except Exception as e:
-                self._task_manager.update_task_status(
-                    task.id,
-                    TaskState.FAILED,
-                    message=Message(
-                        role="agent",
-                        parts=[TextPart(text=f"Error: {e}")],
-                    ),
-                )
-
-        # Get updated task
-        task = self._task_manager.get_task(task.id)
-        return task.model_dump() if task else {}
-
-    async def _handle_tasks_get(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle tasks/get method.
-
-        Args:
-            params: Method parameters
-
-        Returns:
-            Task details
-        """
-        parsed = TaskGetParams.model_validate(params)
-        task = self._task_manager.get_task(parsed.id)
-
-        if not task:
-            raise A2AError(
-                f"Task not found: {parsed.id}",
-                details={"task_id": parsed.id},
-            )
-
-        result = task.model_dump()
-
-        # Limit history if requested
-        if parsed.historyLength and task.history:
-            result["history"] = result["history"][-parsed.historyLength :]
-
-        return result
-
-    async def _handle_tasks_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle tasks/list method.
-
-        Args:
-            params: Method parameters
-
-        Returns:
-            List of tasks
-        """
-        parsed = TaskListParams.model_validate(params)
-        tasks = self._task_manager.list_tasks(
-            context_id=parsed.contextId,
-            status=parsed.status,
-            page_size=parsed.pageSize,
-        )
-
-        return {
-            "tasks": [t.model_dump() for t in tasks],
-            "totalSize": len(tasks),
-            "pageSize": parsed.pageSize,
-            "nextPageToken": "",
-        }
-
-    async def _handle_tasks_cancel(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle tasks/cancel method.
-
-        Args:
-            params: Method parameters
-
-        Returns:
-            Cancelled task
-        """
-        parsed = TaskCancelParams.model_validate(params)
-        task = self._task_manager.cancel_task(parsed.id)
-
-        if not task:
-            raise A2AError(
-                f"Task not found: {parsed.id}",
-                details={"task_id": parsed.id},
-            )
-
-        return task.model_dump()
-
-    def add_skill(self, skill: Skill) -> None:
+    def add_skill(self, skill: AgentSkill) -> None:
         """Add a skill to the agent.
 
         Args:
@@ -654,6 +488,8 @@ class A2AServer:
             agent: Agent instance to handle requests
         """
         self.agent = agent
+        if self._handler:
+            self._handler.agent = agent
 
 
 def create_a2a_server(
@@ -661,7 +497,7 @@ def create_a2a_server(
     name: str = "A2A Agent",
     description: str = "A2A Protocol Agent",
     url: str = "http://localhost:8000",
-    skills: list[Skill] | None = None,
+    skills: list[AgentSkill] | None = None,
 ) -> FastAPI:
     """Create A2A FastAPI server.
 
@@ -696,14 +532,11 @@ def create_default_app() -> FastAPI:
         name="Demo A2A Agent",
         description="Demonstration A2A agent for workshop",
         skills=[
-            Skill(
+            AgentSkill(
                 id="echo",
                 name="Echo",
                 description="Echo back the input message",
-                inputSchema={
-                    "type": "object",
-                    "properties": {"text": {"type": "string"}},
-                },
+                tags=["demo", "echo"],
             ),
         ],
     )

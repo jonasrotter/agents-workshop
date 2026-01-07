@@ -3,6 +3,7 @@
 Auto-generated from all feature plans. Last updated: 2026-01-01
 
 ## Active Technologies
+- In-memory task store (`InMemoryTaskStore` from SDK) (main)
 
 - Python 3.11+ + Microsoft Agent Framework (azure-ai-projects), OpenTelemetry, Azure OpenAI SDK, FastAPI (AG-UI/A2A servers), MCP SDK (001-agentic-patterns-workshop)
 
@@ -22,6 +23,7 @@ cd src; pytest; ruff check .
 Python 3.11+: Follow standard conventions
 
 ## Recent Changes
+- main: Added Python 3.11+
 
 - 001-agentic-patterns-workshop: Added Python 3.11+ + Microsoft Agent Framework (azure-ai-projects), OpenTelemetry, Azure OpenAI SDK, FastAPI (AG-UI/A2A servers), MCP SDK
 
