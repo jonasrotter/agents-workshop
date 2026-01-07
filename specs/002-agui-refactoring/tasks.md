@@ -92,8 +92,8 @@
 
 - [X] T216 Remove unused imports and dead code from src/agents/agui_server.py
 - [X] T217 Run linting (ruff) and type checking (mypy) on src/agents/agui_server.py (Note: ruff/mypy not installed, syntax check passed)
-- [ ] T218 Validate quickstart.md code examples execute correctly
-- [ ] T219 Commit and push changes to branch 002-agui-refactoring
+- [X] T218 Validate quickstart.md code examples execute correctly
+- [X] T219 Commit and push changes to branch 002-agui-refactoring
 
 **Checkpoint**: Refactoring complete, ready for merge ✅
 
