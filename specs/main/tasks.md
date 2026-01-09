@@ -93,8 +93,24 @@
 - [X] Run contract tests (34/34 passed)
 - [X] Run integration tests (461 passed, 3 skipped)
 - [X] Verify 80% code reduction achieved (~713 → ~350 lines = ~51% reduction of total, >80% reduction of custom code)
+- [X] Verify OpenTelemetry traces captured for A2A operations (NFR-001)
 
 **Est**: 30m | **Priority**: HIGH | **Deps**: T001-T006
+
+---
+
+## Phase 5: Microsoft Agent Framework Integration ⏳
+
+### T008: Integrate A2AAgent Client (FR-004)
+
+- [ ] Import `A2AAgent` from `agent-framework-a2a` package
+- [ ] Create example demonstrating A2AAgent client calls to external A2A servers
+- [ ] Add client example to notebook 03_a2a_protocol.ipynb (optional section)
+- [ ] Document A2AAgent usage in research.md
+
+**File**: `notebooks/03_a2a_protocol.ipynb`, `specs/main/research.md`
+**Est**: 1h | **Priority**: MEDIUM | **Deps**: T001-T007
+**Status**: DEFERRED - Can be added in future iteration
 
 ---
 
@@ -106,9 +122,10 @@
 | Core | T001-T003 | ✅ COMPLETE |
 | Integration | T004-T006 | ✅ COMPLETE |
 | Validation | T007 | ✅ COMPLETE |
+| Agent Framework | T008 | ⏳ DEFERRED |
 
-**Total Est**: 4-5 hours
-**Actual**: Complete
+**Total Est**: 5-6 hours
+**Actual**: T000-T007 Complete, T008 Deferred
 
 ### Final Results
 - **Code Reduction**: ~713 lines → ~350 lines (~51% reduction)

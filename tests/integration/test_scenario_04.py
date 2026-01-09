@@ -7,11 +7,20 @@ Tests the complete workflow functionality including:
 - Step execution flows
 - Error handling strategies
 - End-to-end workflow execution
+
+Note: The src.workflows module is deprecated in favor of Microsoft Agent Framework's
+WorkflowBuilder. These tests ensure backward compatibility during migration.
+See notebooks/04_deterministic_workflows.ipynb for the new recommended patterns.
 """
 
 import pytest
+import warnings
 from unittest.mock import AsyncMock, MagicMock
 from typing import Any
+
+
+# Configure pytest to filter deprecation warnings for legacy workflow imports
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning:src.workflows")
 
 
 class TestScenario04Imports:

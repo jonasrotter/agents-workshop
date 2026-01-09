@@ -1,104 +1,76 @@
-# Implementation Plan: [FEATURE]
+# Implementation Plan: A2A Server SDK Refactoring
 
-**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
-**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
-
-**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
+**Branch**: `main` | **Date**: 2026-01-06 | **Spec**: [spec.md](./spec.md)
+**Input**: Feature specification from `/specs/main/spec.md`
 
 ## Summary
 
-[Extract from feature spec: primary requirement + technical approach from research]
+Refactor the custom A2A server implementation to use the official `a2a-sdk` package, replacing ~400 lines of custom Pydantic models and request handlers with SDK equivalents. This reduces maintenance burden and ensures protocol compliance.
 
 ## Technical Context
 
-<!--
-  ACTION REQUIRED: Replace the content in this section with the technical details
-  for the project. The structure here is presented in advisory capacity to guide
-  the iteration process.
--->
-
-**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
-**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
-**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
-**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
-**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
-**Project Type**: [single/web/mobile - determines source structure]  
-**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
-**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
-**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
+**Language/Version**: Python 3.11+  
+**Primary Dependencies**: `a2a-sdk==0.3.17`, `agent-framework-a2a==1.0.0b251120`, FastAPI  
+**Storage**: In-memory (`InMemoryTaskStore` from SDK)  
+**Testing**: pytest + pytest-cov + pytest-asyncio  
+**Target Platform**: Linux/Windows server  
+**Project Type**: Single project (workshop codebase)  
+**Performance Goals**: N/A (educational workshop)  
+**Constraints**: Backward compatibility with existing notebooks  
+**Scale/Scope**: 7 notebooks, ~5000 LOC
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+| Principle | Status | Notes |
+|-----------|--------|-------|
+| I. Type Safety | ✅ PASS | SDK uses Pydantic models with full type hints |
+| II. Test-First | ✅ PASS | Contract tests updated for SDK types |
+| III. Clean Code | ✅ PASS | SDK reduces custom code by >50% |
+| IV. Dependencies | ✅ PASS | Using official SDK from requirements.txt |
+| V. Observability | ✅ PASS | OpenTelemetry integration preserved |
 
 ## Project Structure
 
 ### Documentation (this feature)
 
 ```text
-specs/[###-feature]/
-├── plan.md              # This file (/speckit.plan command output)
-├── research.md          # Phase 0 output (/speckit.plan command)
-├── data-model.md        # Phase 1 output (/speckit.plan command)
-├── quickstart.md        # Phase 1 output (/speckit.plan command)
-├── contracts/           # Phase 1 output (/speckit.plan command)
-└── tasks.md             # Phase 2 output (/speckit.tasks command - NOT created by /speckit.plan)
+specs/main/
+├── plan.md              # This file
+├── spec.md              # Feature specification
+├── research.md          # SDK analysis and type mappings
+├── data-model.md        # Type migration guide
+├── quickstart.md        # Quick start guide
+├── contracts/           # Interface contracts
+│   └── a2a-sdk-interfaces.md
+└── tasks.md             # Implementation tasks
 ```
 
 ### Source Code (repository root)
-<!--
-  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
-  for this feature. Delete unused options and expand the chosen structure with
-  real paths (e.g., apps/admin, packages/something). The delivered plan must
-  not include Option labels.
--->
 
 ```text
-# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
 src/
-├── models/
-├── services/
-├── cli/
-└── lib/
+├── agents/
+│   ├── __init__.py          # Module exports (updated for SDK types)
+│   ├── a2a_server.py        # Refactored to use A2AFastAPIApplication
+│   └── ...                  # Other agent implementations
+└── ...
 
 tests/
 ├── contract/
+│   └── test_a2a_schemas_sdk.py  # SDK type validation
 ├── integration/
+│   └── test_scenario_03.py      # A2A protocol integration tests
 └── unit/
+    └── ...                      # Unit tests
 
-# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
-backend/
-├── src/
-│   ├── models/
-│   ├── services/
-│   └── api/
-└── tests/
-
-frontend/
-├── src/
-│   ├── components/
-│   ├── pages/
-│   └── services/
-└── tests/
-
-# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
-api/
-└── [same as backend above]
-
-ios/ or android/
-└── [platform-specific structure: feature modules, UI flows, platform tests]
+notebooks/
+└── 03_a2a_protocol.ipynb        # Updated for SDK imports
 ```
 
-**Structure Decision**: [Document the selected structure and reference the real
-directories captured above]
+**Structure Decision**: Single project structure retained. SDK integration affects `src/agents/a2a_server.py` and related test files.
 
 ## Complexity Tracking
 
-> **Fill ONLY if Constitution Check has violations that must be justified**
-
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
-| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+No constitution violations.

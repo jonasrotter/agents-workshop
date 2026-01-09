@@ -1,6 +1,25 @@
 """
 Deterministic Workflow Engine.
 
+.. deprecated:: 1.0.0
+    This module is deprecated. Use Microsoft Agent Framework's `WorkflowBuilder` instead:
+    
+    Before (deprecated):
+        from src.workflows import WorkflowEngine, SequentialStep
+        engine = WorkflowEngine("my_workflow")
+        engine.add_step(SequentialStep([step1, step2]))
+    
+    After (recommended):
+        from agent_framework import WorkflowBuilder, ChatAgent
+        workflow = (
+            WorkflowBuilder()
+            .set_start_executor(agent1)
+            .add_edge(agent1, agent2)
+            .build()
+        )
+    
+    See notebooks/04_deterministic_workflows.ipynb for migration examples.
+
 Provides the core engine for executing multi-agent workflows with:
 - Sequential agent orchestration
 - Data flow between steps
@@ -8,6 +27,7 @@ Provides the core engine for executing multi-agent workflows with:
 - Telemetry integration
 """
 
+import warnings
 import asyncio
 import time
 from dataclasses import dataclass, field
@@ -26,6 +46,14 @@ from src.workflows.steps import (
 )
 
 tracer = get_tracer(__name__)
+
+# Emit deprecation warning when module is imported
+warnings.warn(
+    "src.workflows.engine is deprecated. Use Microsoft Agent Framework's WorkflowBuilder instead. "
+    "See notebooks/04_deterministic_workflows.ipynb for migration examples.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 
 class ErrorStrategy(str, Enum):

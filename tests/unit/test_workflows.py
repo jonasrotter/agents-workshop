@@ -6,33 +6,40 @@ Tests the workflow engine logic including:
 - Error handling strategies
 - Retry configuration
 - Data flow between steps
+
+Note: The src.workflows module is deprecated in favor of Microsoft Agent Framework's
+WorkflowBuilder. These tests ensure backward compatibility during migration.
 """
 
 import pytest
+import warnings
 from unittest.mock import AsyncMock, MagicMock
 from typing import Any
 
-from src.workflows.steps import (
-    WorkflowStep,
-    WorkflowContext,
-    StepResult,
-    StepStatus,
-    RetryConfig,
-    SequentialStep,
-    ParallelStep,
-    ConditionalStep,
-    DataTransform,
-    AgentStep,
-)
-from src.workflows.engine import (
-    WorkflowEngine,
-    WorkflowResult,
-    WorkflowStatus,
-    ErrorStrategy,
-    ErrorConfig,
-    create_workflow,
-    WorkflowBuilder,
-)
+# Suppress deprecation warnings for these tests (testing legacy code)
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module="src.workflows")
+    from src.workflows.steps import (
+        WorkflowStep,
+        WorkflowContext,
+        StepResult,
+        StepStatus,
+        RetryConfig,
+        SequentialStep,
+        ParallelStep,
+        ConditionalStep,
+        DataTransform,
+        AgentStep,
+    )
+    from src.workflows.engine import (
+        WorkflowEngine,
+        WorkflowResult,
+        WorkflowStatus,
+        ErrorStrategy,
+        ErrorConfig,
+        create_workflow,
+        WorkflowBuilder,
+    )
 
 
 class SimpleStep(WorkflowStep):

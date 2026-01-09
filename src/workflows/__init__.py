@@ -1,6 +1,18 @@
 """
 Workflow Engine Module.
 
+.. deprecated:: 1.0.0
+    This module is deprecated. Use Microsoft Agent Framework's `WorkflowBuilder` instead.
+    
+    Migration Guide:
+    - `WorkflowEngine.add_step()` → `WorkflowBuilder().add_edge()`
+    - `SequentialStep([steps])` → Chained `add_edge()` calls
+    - `ParallelStep([steps])` → `asyncio.gather()` with agents
+    - `ConditionalStep(cond, a, b)` → `add_edge(condition=fn)`
+    - `ErrorStrategy` → Middleware patterns (RetryMiddleware)
+    
+    See notebooks/04_deterministic_workflows.ipynb for complete migration examples.
+
 This module provides deterministic multi-agent workflow orchestration capabilities.
 It includes workflow step definitions, execution engine, and coordination utilities.
 
@@ -24,6 +36,16 @@ Enhanced Builders:
     - group_chat: Factory function for GroupChatBuilder
     - pipeline: Factory function for PipelineBuilder
 """
+
+import warnings
+
+# Emit deprecation warning when module is imported
+warnings.warn(
+    "src.workflows is deprecated. Use Microsoft Agent Framework's WorkflowBuilder instead. "
+    "See notebooks/04_deterministic_workflows.ipynb for migration examples.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 from src.workflows.steps import (
     WorkflowStep,

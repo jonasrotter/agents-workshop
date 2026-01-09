@@ -1,6 +1,29 @@
 """
 Workflow Step Definitions.
 
+.. deprecated:: 1.0.0
+    This module is deprecated. Use Microsoft Agent Framework patterns instead:
+    
+    Before (deprecated):
+        from src.workflows.steps import SequentialStep, ParallelStep
+        seq = SequentialStep([step1, step2])
+        par = ParallelStep([step_a, step_b])
+    
+    After (recommended):
+        from agent_framework import WorkflowBuilder, ChatAgent
+        import asyncio
+        
+        # Sequential: use chained add_edge()
+        workflow = WorkflowBuilder().set_start_executor(a1).add_edge(a1, a2).build()
+        
+        # Parallel: use asyncio.gather()
+        results = await asyncio.gather(agent1.run(x), agent2.run(x))
+        
+        # Conditional: use add_edge(condition=fn)
+        workflow = WorkflowBuilder().add_edge(a1, a2, condition=my_fn).build()
+    
+    See notebooks/04_deterministic_workflows.ipynb for migration examples.
+
 Provides step types for building deterministic multi-agent workflows:
 - WorkflowStep: Base class for all steps
 - SequentialStep: Executes steps in sequence
@@ -9,6 +32,7 @@ Provides step types for building deterministic multi-agent workflows:
 - DataTransform: Data transformation between steps
 """
 
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -18,6 +42,14 @@ from pydantic import BaseModel, Field
 from src.common.telemetry import get_tracer
 
 tracer = get_tracer(__name__)
+
+# Emit deprecation warning when module is imported
+warnings.warn(
+    "src.workflows.steps is deprecated. Use Microsoft Agent Framework patterns instead. "
+    "See notebooks/04_deterministic_workflows.ipynb for migration examples.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 
 class StepStatus(str, Enum):
