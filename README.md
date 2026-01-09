@@ -11,7 +11,7 @@ This workshop consists of 7 interactive Jupyter Notebook scenarios, each teachin
 | [01](notebooks/01_simple_agent_mcp.ipynb) | Simple Agent + MCP | 30 min | Base agent pattern, MCP tools, OpenTelemetry observability |
 | [02](notebooks/02_agui_interface.ipynb) | AG-UI Protocol | 45 min | Frontend integration with streaming events |
 | [03](notebooks/03_a2a_protocol.ipynb) | A2A Interoperability | 45 min | Exposing agents for external consumption |
-| [04](notebooks/04_deterministic_workflows.ipynb) | Workflows | 45 min | Multi-agent orchestration, sequential/parallel execution |
+| [04](notebooks/04_deterministic_workflows.ipynb) | Workflows | 45 min | Multi-agent orchestration with Microsoft Agent Framework |
 | [05](notebooks/05_declarative_agents.ipynb) | Declarative Agents | 30 min | YAML-based agent and workflow configuration |
 | [06](notebooks/06_agent_discussions.ipynb) | Agent Discussions | 45 min | Moderated debates, turn-taking, conflict resolution |
 | [07](notebooks/07_evaluation_evolution.ipynb) | Evaluation & Evolution | 45 min | Metrics, prompt tuning, A/B testing |
@@ -20,8 +20,8 @@ This workshop consists of 7 interactive Jupyter Notebook scenarios, each teachin
 ## 📋 Prerequisites
 
 ### Required
-- **Python 3.11+** installed
-- **Azure OpenAI API** access (or OpenAI API key)
+- **Python 3.11+** (tested with Python 3.12)
+- **Azure OpenAI** resource with deployed model (e.g., `gpt-4.1-mini`)
 - **Azure Subscription** for Azure Monitor (observability features)
 - Basic Python and async/await knowledge
 
@@ -44,7 +44,7 @@ cd agents-workshop
 # Using standard Python
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt"
+pip install -r requirements.txt
 ```
 
 ### 3. Configure Environment
@@ -60,17 +60,22 @@ Edit `.env` with your settings:
 ```env
 # Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_API_KEY=your-api-key
 AZURE_OPENAI_DEPLOYMENT=gpt-4.1-mini
+
+# Authentication (choose one):
+# Option 1: API Key (if enabled on your resource)
+AZURE_OPENAI_API_KEY=your-api-key
+
+# Option 2: Entra ID (Azure AD) - Recommended
+# Leave AZURE_OPENAI_API_KEY empty and ensure you have:
+# - Azure CLI logged in: az login
+# - RBAC role: "Cognitive Services OpenAI User" on your resource
 
 # Azure Monitor (for observability)
 APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=xxx;IngestionEndpoint=https://...
-
-# Optional: Model configuration
-DEFAULT_MODEL=gpt-4.1-mini
-DEFAULT_TEMPERATURE=0.7
-DEFAULT_MAX_TOKENS=4096
 ```
+
+> **Note**: If your Azure OpenAI resource has `disableLocalAuth=true`, you must use Entra ID authentication. The notebooks automatically detect and use `DefaultAzureCredential` when no API key is provided.
 
 ### 4. Verify Setup
 
@@ -105,41 +110,61 @@ agents-workshop/
 │   │   ├── telemetry.py         # OpenTelemetry setup
 │   │   ├── exceptions.py        # Custom exceptions
 │   │   ├── evaluation.py        # Metrics collection
-│   │   └── prompt_tuning.py     # Prompt iteration
+│   │   ├── prompt_tuning.py     # Prompt iteration
+│   │   └── yaml_loader.py       # YAML configuration loader
 │   ├── tools/                   # MCP tool implementations
+│   │   ├── mcp_server.py        # FastMCP server wrapper
 │   │   ├── search_tool.py
 │   │   ├── calculator_tool.py
 │   │   └── file_tool.py
-│   ├── agents/                  # Agent definitions
-│   │   ├── base_agent.py
-│   │   ├── research_agent.py
-│   │   └── moderator_agent.py
-│   ├── protocols/               # Protocol implementations
-│   │   ├── agui.py             # AG-UI server
-│   │   ├── a2a.py              # A2A protocol
-│   │   └── discussion.py       # Discussion protocols
-│   └── workflows/               # Workflow engine
-│       └── engine.py
+│   ├── agents/                  # Agent implementations
+│   │   ├── base_agent.py        # Base agent with telemetry
+│   │   ├── research_agent.py    # Research agent
+│   │   ├── moderator_agent.py   # Discussion moderator
+│   │   ├── declarative.py       # YAML-based agent loader
+│   │   ├── discussion.py        # Multi-agent discussions
+│   │   ├── agui_server.py       # AG-UI protocol server
+│   │   ├── a2a_server.py        # A2A protocol server
+│   │   └── factories.py         # Agent factory functions
+│   └── workflows/               # Workflow engine (deprecated)
+│       ├── engine.py            # ⚠️ Use WorkflowBuilder instead
+│       ├── steps.py
+│       └── builders.py
 ├── configs/
 │   ├── agents/                  # Declarative agent configs
+│   │   ├── research_agent.yaml
+│   │   └── summarizer_agent.yaml
 │   └── workflows/               # Declarative workflow configs
+│       └── research_pipeline.yaml
 ├── tests/
 │   ├── unit/                    # Unit tests
-│   ├── integration/             # Integration tests
+│   ├── integration/             # Integration tests (notebook scenarios)
 │   └── contract/                # Protocol contract tests
-└── docs/                        # Documentation
+├── docs/                        # Documentation
+│   ├── ARCHITECTURE.md
+│   ├── CONTRIBUTING.md
+│   └── COST_GUIDANCE.md
+└── specs/                       # Feature specifications
 ```
+
+> **Note**: The `src/workflows/` module is deprecated. Notebook 04 now uses Microsoft Agent Framework's `WorkflowBuilder` for workflow orchestration.
 
 ## 🔧 Technology Stack
 
-- **Python 3.11+** - Modern Python with strict type hints
-- **Azure OpenAI SDK** - LLM integration
-- **Microsoft Agent Framework** - Agent orchestration
-- **FastAPI** - AG-UI and A2A servers
-- **Pydantic v2** - Data validation
-- **OpenTelemetry** - Distributed tracing
-- **Azure Monitor** - Observability backend
-- **pytest** - Testing framework
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `agent-framework` | `1.0.0b251120` | Microsoft Agent Framework |
+| `azure-ai-projects` | `1.0.0b11` | Azure AI Projects client |
+| `openai` | `1.84.0` | OpenAI/Azure OpenAI SDK |
+| `pydantic` | `2.11.5` | Data validation |
+| `fastapi` | `0.115.12` | AG-UI and A2A servers |
+| `opentelemetry-*` | `1.30+` | Distributed tracing |
+| `azure-identity` | `1.23.0` | Entra ID authentication |
+
+**Runtime Requirements:**
+- Python 3.11+ (3.12 recommended)
+- Azure OpenAI deployment with GPT-4o model
+- Entra ID authentication (recommended) or API key
 
 
 ## 🧪 Running Tests
@@ -151,16 +176,61 @@ pytest
 # Run with coverage
 pytest --cov=src
 
-# Run specific test file
-pytest tests/unit/test_base_agent.py -v
+# Run unit tests
+pytest tests/unit/ -v
 
-# Run integration tests
+# Run integration tests (notebook scenarios)
 pytest tests/integration/ -v
+
+# Run contract tests (protocol schemas)
+pytest tests/contract/ -v
 ```
+
+
+## 🔐 Authentication Options
+
+The workshop supports two authentication methods for Azure OpenAI:
+
+### Option 1: Entra ID Authentication (Recommended)
+
+Uses Azure Identity for secure, token-based authentication. No API keys required.
+
+```python
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+credential = DefaultAzureCredential()
+token_provider = get_bearer_token_provider(
+    credential, "https://cognitiveservices.azure.com/.default"
+)
+
+client = AzureOpenAI(
+    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+    azure_ad_token_provider=token_provider,
+    api_version="2025-01-01-preview",
+)
+```
+
+**Required Azure Role**: `Cognitive Services OpenAI User` on your Azure OpenAI resource.
+
+### Option 2: API Key Authentication
+
+If your Azure OpenAI resource has `disableLocalAuth=false`:
+
+```python
+client = AzureOpenAI(
+    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+    api_key=os.environ["AZURE_OPENAI_API_KEY"],
+    api_version="2025-01-01-preview",
+)
+```
+
+> **Note**: Many enterprise Azure OpenAI resources have local authentication disabled (`disableLocalAuth=true`). In this case, you must use Entra ID authentication.
 
 ## 📖 Additional Resources
 
 - [Architecture Documentation](docs/ARCHITECTURE.md)
+- [Contributing Guide](docs/CONTRIBUTING.md)
+- [Cost Guidance](docs/COST_GUIDANCE.md)
 - [Azure OpenAI Documentation](https://learn.microsoft.com/azure/ai-services/openai/)
 - [Microsoft Agent Framework](https://github.com/microsoft/agent-framework)
 
