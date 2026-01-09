@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import pytest
 import time
 from datetime import datetime
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 from src.common.evaluation import (
     MetricType,
@@ -25,7 +27,24 @@ from src.common.evaluation import (
     create_collector,
     evaluate_response,
     estimate_cost,
+    # SDK wrapper functions
+    create_relevance_evaluator,
+    create_coherence_evaluator,
+    create_fluency_evaluator,
+    create_groundedness_evaluator,
+    create_intent_resolution_evaluator,
+    create_task_adherence_evaluator,
+    create_tool_call_accuracy_evaluator,
+    batch_evaluate,
 )
+from src.common.config import (
+    get_model_config,
+    get_azure_ai_project,
+    validate_model_config,
+    get_config_summary,
+    ModelConfig,
+)
+from src.common.exceptions import ConfigurationError
 
 
 # =============================================================================
@@ -637,3 +656,460 @@ class TestMetricsIntegration:
         summary = collector.summary()
         assert summary["total_metrics"] >= 3
         assert summary["total_evaluations"] == 1
+
+
+# =============================================================================
+# Evaluation Config Tests
+# =============================================================================
+
+
+class TestGetModelConfig:
+    """Tests for get_model_config function.
+    
+    The get_model_config function now uses Settings from src.common.config
+    which reads from AZURE_OPENAI_* environment variables. Tests pass
+    a mock Settings object to ensure isolation from .env file.
+    """
+
+    def test_get_config_from_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test getting config from environment variables via Settings."""
+        # Use the correct AZURE_OPENAI_* env vars (read by Settings)
+        monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com")
+        monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+        
+        # Clear cached settings so new env vars take effect
+        from src.common.config import get_settings
+        get_settings.cache_clear()
+
+        config = get_model_config()
+
+        assert config["azure_deployment"] == "gpt-4o"
+        assert config["api_key"] == "test-key"
+        assert config["azure_endpoint"] == "https://test.openai.azure.com"
+        assert config["api_version"] == "2024-02-15-preview"
+
+    def test_get_config_with_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test getting config with parameter overrides."""
+        monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "default-model")
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "default-key")
+        monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://default.openai.azure.com")
+        
+        from src.common.config import get_settings
+        get_settings.cache_clear()
+
+        config = get_model_config(
+            azure_deployment="override-model",
+            api_key="override-key",
+        )
+
+        assert config["azure_deployment"] == "override-model"
+        assert config["api_key"] == "override-key"
+        # Endpoint should still come from env
+        assert config["azure_endpoint"] == "https://default.openai.azure.com"
+
+    def test_get_config_raises_on_missing(self) -> None:
+        """Test that missing config raises ConfigurationError."""
+        # Create a mock Settings with missing values
+        from src.common.config import Settings
+        
+        mock_settings = MagicMock(spec=Settings)
+        mock_settings.azure_openai_deployment = ""
+        mock_settings.azure_openai_api_key = ""
+        mock_settings.azure_openai_endpoint = ""
+        mock_settings.azure_openai_api_version = ""
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_model_config(settings=mock_settings)
+
+        assert "Missing required environment variables" in str(exc_info.value)
+
+    def test_get_config_no_raise_on_missing(self) -> None:
+        """Test getting config without raising on missing values."""
+        from src.common.config import Settings
+        
+        mock_settings = MagicMock(spec=Settings)
+        mock_settings.azure_openai_deployment = ""
+        mock_settings.azure_openai_api_key = ""
+        mock_settings.azure_openai_endpoint = ""
+        mock_settings.azure_openai_api_version = ""
+
+        config = get_model_config(raise_on_missing=False, settings=mock_settings)
+
+        assert config["azure_deployment"] == ""
+        assert config["api_key"] == ""
+        assert config["azure_endpoint"] == ""
+
+    def test_default_api_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test default API version is used when not set."""
+        monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "model")
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "key")
+        monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com")
+        monkeypatch.delenv("AZURE_OPENAI_API_VERSION", raising=False)
+        
+        from src.common.config import get_settings
+        get_settings.cache_clear()
+
+        config = get_model_config()
+
+        # Default comes from Settings.azure_openai_api_version default
+        assert config["api_version"] == "2024-10-01-preview"
+
+
+class TestGetAzureAIProject:
+    """Tests for get_azure_ai_project function."""
+
+    def test_get_project_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test getting Azure AI project config."""
+        monkeypatch.setenv("AZURE_AI_PROJECT_SUBSCRIPTION_ID", "sub-123")
+        monkeypatch.setenv("AZURE_AI_PROJECT_RESOURCE_GROUP", "rg-test")
+        monkeypatch.setenv("AZURE_AI_PROJECT_NAME", "project-test")
+        
+        from src.common.config import get_settings
+        get_settings.cache_clear()
+
+        project = get_azure_ai_project()
+
+        assert project is not None
+        assert project["subscription_id"] == "sub-123"
+        assert project["resource_group_name"] == "rg-test"
+        assert project["project_name"] == "project-test"
+
+    def test_get_project_returns_none_on_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that missing project config returns None."""
+        monkeypatch.delenv("AZURE_AI_PROJECT_SUBSCRIPTION_ID", raising=False)
+        monkeypatch.delenv("AZURE_AI_PROJECT_RESOURCE_GROUP", raising=False)
+        monkeypatch.delenv("AZURE_AI_PROJECT_NAME", raising=False)
+        
+        from src.common.config import get_settings
+        get_settings.cache_clear()
+
+        project = get_azure_ai_project()
+
+        assert project is None
+
+    def test_get_project_with_partial_config(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that partial project config returns None."""
+        monkeypatch.setenv("AZURE_AI_PROJECT_SUBSCRIPTION_ID", "sub-123")
+        # Missing resource group and project name
+        monkeypatch.delenv("AZURE_AI_PROJECT_RESOURCE_GROUP", raising=False)
+        monkeypatch.delenv("AZURE_AI_PROJECT_NAME", raising=False)
+        
+        from src.common.config import get_settings
+        get_settings.cache_clear()
+
+        project = get_azure_ai_project()
+
+        assert project is None
+
+
+class TestValidateConfig:
+    """Tests for validate_model_config function."""
+
+    def test_valid_config(self) -> None:
+        """Test validation of valid config."""
+        config: ModelConfig = {
+            "azure_deployment": "gpt-4o",
+            "api_key": "test-key",
+            "azure_endpoint": "https://test.openai.azure.com",
+            "api_version": "2024-02-15-preview",
+        }
+
+        issues = validate_model_config(config)
+
+        assert issues == []
+
+    def test_missing_fields(self) -> None:
+        """Test validation catches missing fields."""
+        config: ModelConfig = {
+            "azure_deployment": "",
+            "api_key": "",
+            "azure_endpoint": "",
+            "api_version": "",
+        }
+
+        issues = validate_model_config(config)
+
+        # api_key is optional (credential auth supported), so only 3 required fields
+        assert len(issues) == 3
+        assert any("azure_deployment" in issue for issue in issues)
+        assert not any("api_key" in issue for issue in issues)  # api_key is now optional
+
+    def test_invalid_endpoint(self) -> None:
+        """Test validation catches invalid endpoint."""
+        config: ModelConfig = {
+            "azure_deployment": "gpt-4o",
+            "api_key": "test-key",
+            "azure_endpoint": "http://insecure.endpoint.com",  # Not https
+            "api_version": "2024-02-15-preview",
+        }
+
+        issues = validate_model_config(config)
+
+        assert any("https://" in issue for issue in issues)
+
+
+class TestGetConfigSummary:
+    """Tests for get_config_summary function."""
+
+    def test_masks_api_key(self) -> None:
+        """Test that API key is masked in summary."""
+        config: ModelConfig = {
+            "azure_deployment": "gpt-4o",
+            "api_key": "super-secret-key",
+            "azure_endpoint": "https://test.openai.azure.com",
+            "api_version": "2024-02-15-preview",
+        }
+
+        summary = get_config_summary(config)
+
+        assert summary["api_key"] == "***"
+        assert summary["azure_deployment"] == "gpt-4o"
+        assert summary["azure_endpoint"] == "https://test.openai.azure.com"
+
+    def test_shows_not_set_for_empty_key(self) -> None:
+        """Test that empty API key shows (not set)."""
+        config: ModelConfig = {
+            "azure_deployment": "gpt-4o",
+            "api_key": "",
+            "azure_endpoint": "https://test.openai.azure.com",
+            "api_version": "2024-02-15-preview",
+        }
+
+        summary = get_config_summary(config)
+
+        assert summary["api_key"] == "(not set)"
+
+
+# =============================================================================
+# SDK Evaluator Wrapper Tests
+# =============================================================================
+
+
+class TestSDKEvaluatorWrappers:
+    """Tests for SDK evaluator wrapper functions."""
+
+    @pytest.fixture
+    def mock_model_config(self) -> ModelConfig:
+        """Create a mock model config."""
+        return {
+            "azure_deployment": "gpt-4o",
+            "api_key": "test-key",
+            "azure_endpoint": "https://test.openai.azure.com",
+            "api_version": "2024-02-15-preview",
+        }
+
+    @patch("src.common.evaluation.RelevanceEvaluator")
+    def test_create_relevance_evaluator(
+        self, mock_evaluator: MagicMock, mock_model_config: ModelConfig
+    ) -> None:
+        """Test creating relevance evaluator."""
+        evaluator = create_relevance_evaluator(mock_model_config)
+
+        # With api_key set, credential should be None
+        mock_evaluator.assert_called_once_with(mock_model_config, credential=None)
+        assert evaluator == mock_evaluator.return_value
+
+    @patch("src.common.evaluation.CoherenceEvaluator")
+    def test_create_coherence_evaluator(
+        self, mock_evaluator: MagicMock, mock_model_config: ModelConfig
+    ) -> None:
+        """Test creating coherence evaluator."""
+        evaluator = create_coherence_evaluator(mock_model_config)
+
+        # With api_key set, credential should be None
+        mock_evaluator.assert_called_once_with(mock_model_config, credential=None)
+        assert evaluator == mock_evaluator.return_value
+
+    @patch("src.common.evaluation.FluencyEvaluator")
+    def test_create_fluency_evaluator(
+        self, mock_evaluator: MagicMock, mock_model_config: ModelConfig
+    ) -> None:
+        """Test creating fluency evaluator."""
+        evaluator = create_fluency_evaluator(mock_model_config)
+
+        # With api_key set, credential should be None
+        mock_evaluator.assert_called_once_with(mock_model_config, credential=None)
+        assert evaluator == mock_evaluator.return_value
+
+    @patch("src.common.evaluation.GroundednessEvaluator")
+    def test_create_groundedness_evaluator(
+        self, mock_evaluator: MagicMock, mock_model_config: ModelConfig
+    ) -> None:
+        """Test creating groundedness evaluator."""
+        evaluator = create_groundedness_evaluator(mock_model_config)
+
+        # With api_key set, credential should be None
+        mock_evaluator.assert_called_once_with(mock_model_config, credential=None)
+        assert evaluator == mock_evaluator.return_value
+
+    @patch("src.common.evaluation.IntentResolutionEvaluator")
+    def test_create_intent_resolution_evaluator(
+        self, mock_evaluator: MagicMock, mock_model_config: ModelConfig
+    ) -> None:
+        """Test creating intent resolution evaluator."""
+        evaluator = create_intent_resolution_evaluator(mock_model_config)
+
+        # With api_key set, credential should be None
+        mock_evaluator.assert_called_once_with(
+            model_config=mock_model_config,
+            credential=None,
+            threshold=3,
+            is_reasoning_model=False,
+        )
+        assert evaluator == mock_evaluator.return_value
+
+    @patch("src.common.evaluation.TaskAdherenceEvaluator")
+    def test_create_task_adherence_evaluator(
+        self, mock_evaluator: MagicMock, mock_model_config: ModelConfig
+    ) -> None:
+        """Test creating task adherence evaluator."""
+        evaluator = create_task_adherence_evaluator(mock_model_config)
+
+        # With api_key set, credential should be None
+        mock_evaluator.assert_called_once_with(
+            model_config=mock_model_config,
+            credential=None,
+            threshold=3,
+            is_reasoning_model=False,
+        )
+        assert evaluator == mock_evaluator.return_value
+
+    @patch("src.common.evaluation.ToolCallAccuracyEvaluator")
+    def test_create_tool_call_accuracy_evaluator(
+        self, mock_evaluator: MagicMock, mock_model_config: ModelConfig
+    ) -> None:
+        """Test creating tool call accuracy evaluator."""
+        evaluator = create_tool_call_accuracy_evaluator(mock_model_config)
+
+        # With api_key set, credential should be None
+        mock_evaluator.assert_called_once_with(
+            model_config=mock_model_config,
+            credential=None,
+            is_reasoning_model=False,
+        )
+        assert evaluator == mock_evaluator.return_value
+
+
+class TestBatchEvaluate:
+    """Tests for batch_evaluate function."""
+
+    @pytest.fixture
+    def mock_model_config(self) -> ModelConfig:
+        """Create a mock model config."""
+        return {
+            "azure_deployment": "gpt-4o",
+            "api_key": "test-key",
+            "azure_endpoint": "https://test.openai.azure.com",
+            "api_version": "2024-02-15-preview",
+        }
+
+    @pytest.fixture
+    def sample_data(self) -> list[dict[str, str]]:
+        """Create sample evaluation data."""
+        return [
+            {
+                "query": "What is AI?",
+                "context": "AI is artificial intelligence.",
+                "response": "AI stands for artificial intelligence.",
+            },
+            {
+                "query": "Define ML",
+                "context": "ML is machine learning.",
+                "response": "ML means machine learning.",
+            },
+        ]
+
+    @patch("src.common.evaluation.evaluate")
+    def test_batch_evaluate_with_evaluators_dict(
+        self,
+        mock_evaluate: MagicMock,
+        mock_model_config: ModelConfig,
+        sample_data: list[dict[str, str]],
+    ) -> None:
+        """Test batch evaluation with evaluators dictionary."""
+        mock_evaluate.return_value = {"metrics": {"relevance": 4.5, "coherence": 4.0}}
+        
+        # Create mock evaluators
+        mock_relevance = MagicMock()
+        mock_coherence = MagicMock()
+        evaluators = {"relevance": mock_relevance, "coherence": mock_coherence}
+
+        result = batch_evaluate(
+            data=sample_data,
+            evaluators=evaluators,
+        )
+
+        mock_evaluate.assert_called_once()
+        assert result == {"metrics": {"relevance": 4.5, "coherence": 4.0}}
+
+    @patch("src.common.evaluation.evaluate")
+    def test_batch_evaluate_with_evaluator_config(
+        self,
+        mock_evaluate: MagicMock,
+        mock_model_config: ModelConfig,
+    ) -> None:
+        """Test batch evaluation with evaluator config."""
+        data = [{"q": "test", "r": "response"}]
+        evaluator_config = {"relevance": {"column_mapping": {"query": "q", "response": "r"}}}
+        mock_evaluate.return_value = {"metrics": {}}
+        mock_evaluator = MagicMock()
+
+        batch_evaluate(
+            data=data,
+            evaluators={"relevance": mock_evaluator},
+            evaluator_config=evaluator_config,
+        )
+
+        call_kwargs = mock_evaluate.call_args.kwargs
+        assert call_kwargs["evaluator_config"] == evaluator_config
+
+    @patch("src.common.evaluation.evaluate")
+    def test_batch_evaluate_with_azure_ai_project(
+        self,
+        mock_evaluate: MagicMock,
+        mock_model_config: ModelConfig,
+        sample_data: list[dict[str, str]],
+    ) -> None:
+        """Test batch evaluation with Azure AI project."""
+        azure_project = {
+            "subscription_id": "sub-123",
+            "resource_group_name": "rg-test",
+            "project_name": "project-test",
+        }
+        mock_evaluate.return_value = {"metrics": {}}
+        mock_evaluator = MagicMock()
+
+        batch_evaluate(
+            data=sample_data,
+            evaluators={"relevance": mock_evaluator},
+            azure_ai_project=azure_project,
+        )
+
+        call_kwargs = mock_evaluate.call_args.kwargs
+        assert call_kwargs["azure_ai_project"] == azure_project
+
+    @patch("src.common.evaluation.evaluate")
+    def test_batch_evaluate_with_output_path(
+        self,
+        mock_evaluate: MagicMock,
+        sample_data: list[dict[str, str]],
+    ) -> None:
+        """Test batch evaluation with output path."""
+        mock_evaluate.return_value = {"metrics": {}}
+        mock_evaluator = MagicMock()
+        output_path = "/tmp/results.json"
+
+        batch_evaluate(
+            data=sample_data,
+            evaluators={"relevance": mock_evaluator},
+            output_path=output_path,
+        )
+
+        call_kwargs = mock_evaluate.call_args.kwargs
+        assert call_kwargs["output_path"] == output_path

@@ -209,18 +209,46 @@ Deterministic workflow orchestration.
 
 ### Evaluation Modules
 
-#### `src/common/evaluation.py`
-Metrics collection and analysis.
+#### `src/common/evaluation_config.py`
+Configuration utilities for Azure AI Evaluation SDK.
 
-**Metric Types:**
+**Key Functions:**
+- `get_model_config()`: Get Azure OpenAI configuration for SDK evaluators
+- `get_azure_ai_project()`: Get Azure AI Foundry project configuration (optional)
+- `validate_config()`: Validate model configuration
+- `get_config_summary()`: Get safe config summary (masks API keys)
+
+**Key Types:**
+- `ModelConfig`: TypedDict for SDK evaluator configuration
+- `AzureAIProject`: TypedDict for Azure AI Foundry integration
+- `ConfigurationError`: Exception for missing configuration
+
+#### `src/common/evaluation.py`
+Metrics collection and SDK evaluator wrappers.
+
+**SDK Evaluator Wrappers (azure-ai-evaluation integration):**
+- Quality Evaluators:
+  - `create_relevance_evaluator()`: Response relevance to query (1-5 scale)
+  - `create_coherence_evaluator()`: Logical flow and structure (1-5 scale)
+  - `create_fluency_evaluator()`: Linguistic quality (1-5 scale)
+  - `create_groundedness_evaluator()`: Factual accuracy against context (1-5 scale)
+- Agent Evaluators:
+  - `create_intent_resolution_evaluator()`: User intent understanding (pass/fail)
+  - `create_task_adherence_evaluator()`: Task completion (pass/fail)
+  - `create_tool_call_accuracy_evaluator()`: Tool usage correctness (0-1 scale)
+- Batch Evaluation:
+  - `batch_evaluate()`: Run multiple evaluators on datasets
+
+**Custom Metric Types (retained for cost tracking):**
 - Latency: Execution time tracking
-- Accuracy: Response correctness
-- Cost: Token/API usage
-- Quality: Subjective scoring
+- Accuracy: Response correctness (simple matchers)
+- Cost: Token/API usage estimation
+- Quality: Custom scoring dimensions
 
 **Key Classes:**
 - `MetricsCollector`: Central metrics aggregator
-- `*Evaluator`: Strategy pattern for evaluation
+- `OpenAICostCalculator`: Token cost estimation
+- `ExactMatchEvaluator`, `ContainsEvaluator`: Simple matchers (deprecated, use SDK)
 
 #### `src/common/prompt_tuning.py`
 Prompt iteration and improvement.

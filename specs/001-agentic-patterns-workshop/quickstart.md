@@ -98,23 +98,26 @@ From your Application Insights resource:
 Create a `.env` file in the repository root:
 
 ```bash
-# Azure OpenAI Configuration
+# Azure OpenAI Configuration (used by all notebooks)
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-api-key-here
-AZURE_OPENAI_API_VERSION=2024-02-15-preview
-
-# Model Deployments
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
-AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=gpt-4o
-AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=gpt-4o
+AZURE_OPENAI_API_VERSION=2024-10-01-preview
+AZURE_OPENAI_DEPLOYMENT=gpt-4o
 
 # Azure Monitor (Observability)
 APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=xxx;IngestionEndpoint=xxx
+
+# Azure AI Foundry (Optional - for cloud evaluation tracking in Notebook 07)
+# AZURE_AI_PROJECT_SUBSCRIPTION_ID=your-subscription-id
+# AZURE_AI_PROJECT_RESOURCE_GROUP=your-resource-group
+# AZURE_AI_PROJECT_NAME=your-project-name
 
 # Optional: OpenAI (for comparison)
 # OPENAI_API_KEY=sk-...
 # OPENAI_CHAT_MODEL_ID=gpt-4o
 ```
+
+**Note**: All notebooks use the same `AZURE_OPENAI_*` environment variables via `src/common/config.py`. The Azure AI Evaluation SDK (Notebook 07) also reads from these same variables.
 
 ### Alternative: Azure CLI Authentication
 

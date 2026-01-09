@@ -35,3 +35,4 @@ pytest-asyncio
 ipykernel>=6.0,<7.0
 a2a-server
 azure-monitor-opentelemetry-exporter
+azure-ai-evaluation>=1.13.7
